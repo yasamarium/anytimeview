@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -14,8 +14,10 @@ import {
   Activity,
   CheckCircle2,
   Lock,
+  Layers,
 } from 'lucide-react';
 import { CLUSTER_NODES, ClusterNode } from '@/lib/config';
+import { SPHERE_PATH, GRATICULE_PATH, LAND_PATH, PRECISE_NODES } from '@/lib/worldData';
 
 interface DatabaseMapModalProps {
   isOpen: boolean;
@@ -31,16 +33,142 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
     'node-us': 36,
   });
 
-  // Calculate coordinates on 1000x500 map canvas
-  const getNodeCoords = (node: ClusterNode) => {
-    const x = ((node.lng + 180) * 1000) / 360;
-    const y = ((90 - node.lat) * 500) / 180;
-    return { x, y };
-  };
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const kolkataPos = getNodeCoords(CLUSTER_NODES[0]);
-  const israelPos = getNodeCoords(CLUSTER_NODES[1]);
-  const usPos = getNodeCoords(CLUSTER_NODES[2]);
+  const kolkataPos = PRECISE_NODES['node-kolkata'];
+  const israelPos = PRECISE_NODES['node-israel'];
+  const usPos = PRECISE_NODES['node-us'];
+
+  // Smooth 60fps Canvas Animation for Data Packets and Radar Waves
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let animId: number;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Helper for Quadratic Bezier point
+    const getQuadPoint = (
+      p0: { x: number; y: number },
+      p1: { x: number; y: number },
+      p2: { x: number; y: number },
+      t: number
+    ) => {
+      const oneMinusT = 1 - t;
+      const x = oneMinusT * oneMinusT * p0.x + 2 * oneMinusT * t * p1.x + t * t * p2.x;
+      const y = oneMinusT * oneMinusT * p0.y + 2 * oneMinusT * t * p1.y + t * t * p2.y;
+      return { x, y };
+    };
+
+    // Control points for curved arcs
+    const usToIsraelControl = { x: 440, y: 90 };
+    const israelToKolkataControl = { x: 670, y: 135 };
+    const usToKolkataControl = { x: 520, y: 270 };
+
+    let start = performance.now();
+
+    const render = (now: number) => {
+      const elapsed = (now - start) / 1000; // seconds
+
+      ctx.clearRect(0, 0, 1000, 520);
+
+      // 1. Draw static connecting arcs
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 5]);
+
+      // US -> Israel Arc
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+      ctx.beginPath();
+      ctx.moveTo(usPos.x, usPos.y);
+      ctx.quadraticCurveTo(usToIsraelControl.x, usToIsraelControl.y, israelPos.x, israelPos.y);
+      ctx.stroke();
+
+      // Israel -> Kolkata Arc
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+      ctx.beginPath();
+      ctx.moveTo(israelPos.x, israelPos.y);
+      ctx.quadraticCurveTo(israelToKolkataControl.x, israelToKolkataControl.y, kolkataPos.x, kolkataPos.y);
+      ctx.stroke();
+
+      // US -> Kolkata Global Arc
+      ctx.strokeStyle = 'rgba(236, 72, 153, 0.3)';
+      ctx.beginPath();
+      ctx.moveTo(usPos.x, usPos.y);
+      ctx.quadraticCurveTo(usToKolkataControl.x, usToKolkataControl.y, kolkataPos.x, kolkataPos.y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      // 2. Animate Traveling Data Packets along the Arcs
+      const drawPacket = (
+        p0: { x: number; y: number },
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        speed: number,
+        offset: number,
+        color: string
+      ) => {
+        const t = (elapsed * speed + offset) % 1;
+        const pt = getQuadPoint(p0, p1, p2, t);
+
+        // Glow
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Outer ambient glow
+        ctx.fillStyle = color.replace('1)', '0.3)');
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      };
+
+      // US to Israel packets
+      drawPacket(usPos, usToIsraelControl, israelPos, 0.4, 0.0, 'rgba(56, 189, 248, 1)');
+      drawPacket(usPos, usToIsraelControl, israelPos, 0.4, 0.5, 'rgba(56, 189, 248, 1)');
+
+      // Israel to Kolkata packets
+      drawPacket(israelPos, israelToKolkataControl, kolkataPos, 0.45, 0.2, 'rgba(16, 185, 129, 1)');
+      drawPacket(israelPos, israelToKolkataControl, kolkataPos, 0.45, 0.7, 'rgba(16, 185, 129, 1)');
+
+      // US to Kolkata packets
+      drawPacket(usPos, usToKolkataControl, kolkataPos, 0.35, 0.4, 'rgba(236, 72, 153, 1)');
+
+      // 3. Smooth Radar Rings at Nodes
+      const drawRadar = (pos: { x: number; y: number }, color: string, timeOffset: number) => {
+        const cycle = ((elapsed * 0.8 + timeOffset) % 1);
+        const radius = 6 + cycle * 22;
+        const alpha = Math.max(0, 1 - cycle);
+
+        ctx.strokeStyle = color.replace('ALPHA', alpha.toFixed(3));
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      };
+
+      drawRadar(kolkataPos, 'rgba(16, 185, 129, ALPHA)', 0.0);
+      drawRadar(kolkataPos, 'rgba(16, 185, 129, ALPHA)', 0.5);
+
+      drawRadar(israelPos, 'rgba(56, 189, 248, ALPHA)', 0.2);
+      drawRadar(israelPos, 'rgba(56, 189, 248, ALPHA)', 0.7);
+
+      drawRadar(usPos, 'rgba(236, 72, 153, ALPHA)', 0.4);
+      drawRadar(usPos, 'rgba(236, 72, 153, ALPHA)', 0.9);
+
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [isOpen]);
 
   const triggerPingTest = () => {
     setIsPinging(true);
@@ -51,7 +179,7 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
         'node-us': Math.floor(32 + Math.random() * 10),
       });
       setIsPinging(false);
-    }, 900);
+    }, 700);
   };
 
   return (
@@ -69,10 +197,10 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
 
           {/* Modal Container */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 16 }}
+            initial={{ opacity: 0, scale: 0.95, y: 14 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 12 }}
-            transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+            exit={{ opacity: 0, scale: 0.96, y: 10 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
             className="relative w-full max-w-5xl rounded-3xl glass-panel p-5 sm:p-7 text-white shadow-2xl z-10 border border-white/[0.1] my-auto"
           >
             {/* Header */}
@@ -88,11 +216,11 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                     </h2>
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-medium text-emerald-400">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      3 Active Nodes
+                      3 Active Clusters
                     </span>
                   </div>
                   <p className="text-xs text-neutral-400 mt-0.5">
-                    High-availability geo-distributed database architecture across Kolkata, Israel, and US States.
+                    100% Geographically Accurate World Map &bull; Live Telemetry across Kolkata, Israel, and US.
                   </p>
                 </div>
               </div>
@@ -105,7 +233,7 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                   title="Run Ping Test"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isPinging ? 'animate-spin text-sky-400' : ''}`} />
-                  <span className="hidden sm:inline">Ping Mesh</span>
+                  <span className="hidden sm:inline">Test Ping</span>
                 </button>
                 <button
                   onClick={onClose}
@@ -116,118 +244,105 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
               </div>
             </div>
 
-            {/* Interactive World Map Canvas */}
-            <div className="mt-5 relative w-full aspect-[2/1] rounded-2xl bg-[#090b10] border border-white/[0.08] overflow-hidden select-none">
-              {/* Background Map Grid */}
+            {/* Geographically Exact World Map Canvas */}
+            <div className="mt-5 relative w-full aspect-[1000/520] rounded-2xl bg-[#06080d] border border-white/[0.09] overflow-hidden select-none shadow-2xl">
+              {/* Exact Natural Earth Vector Layer */}
               <svg
-                viewBox="0 0 1000 500"
-                className="w-full h-full"
-                preserveAspectRatio="xMidYMid slice"
+                viewBox="0 0 1000 520"
+                className="w-full h-full absolute inset-0 pointer-events-none"
               >
-                <defs>
-                  {/* Grid Pattern */}
-                  <pattern id="world-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255, 255, 255, 0.03)" strokeWidth="0.8" />
-                  </pattern>
-
-                  {/* Gradient for Lines */}
-                  <linearGradient id="link-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8" />
-                    <stop offset="50%" stopColor="#818cf8" stopOpacity="0.8" />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity="0.8" />
-                  </linearGradient>
-
-                  {/* Node Glow Filters */}
-                  <filter id="glow-kolkata" x="-50%" y="-50%" width="200%" height="200%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#10b981" floodOpacity="0.8" />
-                  </filter>
-                  <filter id="glow-israel" x="-50%" y="-50%" width="200%" height="200%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#38bdf8" floodOpacity="0.8" />
-                  </filter>
-                  <filter id="glow-us" x="-50%" y="-50%" width="200%" height="200%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#ec4899" floodOpacity="0.8" />
-                  </filter>
-                </defs>
-
-                {/* Map Grid */}
-                <rect width="1000" height="500" fill="url(#world-grid)" />
-
-                {/* Simplified Continents Outlines */}
-                <g fill="rgba(255, 255, 255, 0.04)" stroke="rgba(255, 255, 255, 0.09)" strokeWidth="0.8">
-                  {/* North America */}
-                  <path d="M 120 70 Q 200 40 310 80 Q 320 130 260 170 Q 220 220 160 180 Q 110 130 120 70 Z" />
-                  {/* South America */}
-                  <path d="M 280 230 Q 340 250 360 320 Q 330 420 290 440 Q 260 360 270 270 Z" />
-                  {/* Europe */}
-                  <path d="M 470 70 Q 560 60 590 120 Q 550 160 480 150 Q 450 110 470 70 Z" />
-                  {/* Africa */}
-                  <path d="M 480 170 Q 580 170 590 270 Q 550 380 490 350 Q 450 260 480 170 Z" />
-                  {/* Asia */}
-                  <path d="M 600 70 Q 780 50 880 110 Q 890 220 780 250 Q 690 260 600 180 Z" />
-                  {/* Australia */}
-                  <path d="M 800 320 Q 890 310 900 380 Q 830 420 790 380 Z" />
-                </g>
-
-                {/* Connecting Replication Mesh Lines */}
-                {/* US to Israel */}
+                {/* Earth Sphere Boundary */}
                 <path
-                  d={`M ${usPos.x} ${usPos.y} Q 440 90 ${israelPos.x} ${israelPos.y}`}
-                  fill="none"
-                  stroke="url(#link-grad)"
-                  strokeWidth="1.5"
-                  className="animate-dash"
-                />
-                {/* Israel to Kolkata */}
-                <path
-                  d={`M ${israelPos.x} ${israelPos.y} Q 670 140 ${kolkataPos.x} ${kolkataPos.y}`}
-                  fill="none"
-                  stroke="url(#link-grad)"
-                  strokeWidth="1.5"
-                  className="animate-dash"
-                />
-                {/* US to Kolkata Transatlantic Arc */}
-                <path
-                  d={`M ${usPos.x} ${usPos.y} Q 520 280 ${kolkataPos.x} ${kolkataPos.y}`}
-                  fill="none"
-                  stroke="rgba(255, 255, 255, 0.15)"
+                  d={SPHERE_PATH}
+                  fill="#080c14"
+                  stroke="rgba(255, 255, 255, 0.12)"
                   strokeWidth="1.2"
-                  strokeDasharray="3 4"
                 />
 
-                {/* Node: US States */}
+                {/* Curved Latitude/Longitude Grid Lines */}
+                <path
+                  d={GRATICULE_PATH}
+                  fill="none"
+                  stroke="rgba(255, 255, 255, 0.05)"
+                  strokeWidth="0.75"
+                />
+
+                {/* 100% Real Exact Landmasses */}
+                <path
+                  d={LAND_PATH}
+                  fill="#151a24"
+                  stroke="rgba(255, 255, 255, 0.18)"
+                  strokeWidth="0.85"
+                />
+              </svg>
+
+              {/* 60 FPS Hardware Accelerated Canvas Overlay for Packets & Radar */}
+              <canvas
+                ref={canvasRef}
+                width={1000}
+                height={520}
+                className="w-full h-full absolute inset-0 pointer-events-none"
+              />
+
+              {/* Interactive Node Anchors (HTML/SVG DOM overlays for click/hover) */}
+              <svg
+                viewBox="0 0 1000 520"
+                className="w-full h-full absolute inset-0"
+              >
+                {/* Node: US Central */}
                 <g
-                  className="cursor-pointer transition-transform hover:scale-110"
+                  className="cursor-pointer group"
                   onClick={() => setSelectedNode(CLUSTER_NODES[2])}
                 >
-                  <circle cx={usPos.x} cy={usPos.y} r="18" fill="rgba(236, 72, 153, 0.12)" className="animate-radar" />
-                  <circle cx={usPos.x} cy={usPos.y} r="6" fill="#ec4899" filter="url(#glow-us)" />
-                  <circle cx={usPos.x} cy={usPos.y} r="2.5" fill="#ffffff" />
+                  <circle cx={usPos.x} cy={usPos.y} r="10" fill="rgba(236, 72, 153, 0.2)" />
+                  <circle cx={usPos.x} cy={usPos.y} r="5" fill="#ec4899" />
+                  <circle cx={usPos.x} cy={usPos.y} r="2" fill="#ffffff" />
+                  <rect
+                    x={usPos.x - 45}
+                    y={usPos.y - 25}
+                    width="90"
+                    height="18"
+                    rx="9"
+                    fill="rgba(10, 12, 18, 0.85)"
+                    stroke="rgba(236, 72, 153, 0.4)"
+                    strokeWidth="1"
+                  />
                   <text
                     x={usPos.x}
-                    y={usPos.y - 12}
-                    fill="#ec4899"
-                    fontSize="11"
+                    y={usPos.y - 13}
+                    fill="#f472b6"
+                    fontSize="9.5"
                     fontWeight="bold"
                     textAnchor="middle"
                     className="font-mono"
                   >
-                    US Node ({pings['node-us']}ms)
+                    US ({pings['node-us']}ms)
                   </text>
                 </g>
 
-                {/* Node: Israel */}
+                {/* Node: Israel Security Gateway */}
                 <g
-                  className="cursor-pointer transition-transform hover:scale-110"
+                  className="cursor-pointer group"
                   onClick={() => setSelectedNode(CLUSTER_NODES[1])}
                 >
-                  <circle cx={israelPos.x} cy={israelPos.y} r="18" fill="rgba(56, 189, 248, 0.12)" className="animate-radar" />
-                  <circle cx={israelPos.x} cy={israelPos.y} r="6" fill="#38bdf8" filter="url(#glow-israel)" />
-                  <circle cx={israelPos.x} cy={israelPos.y} r="2.5" fill="#ffffff" />
+                  <circle cx={israelPos.x} cy={israelPos.y} r="10" fill="rgba(56, 189, 248, 0.2)" />
+                  <circle cx={israelPos.x} cy={israelPos.y} r="5" fill="#38bdf8" />
+                  <circle cx={israelPos.x} cy={israelPos.y} r="2" fill="#ffffff" />
+                  <rect
+                    x={israelPos.x - 48}
+                    y={israelPos.y - 25}
+                    width="96"
+                    height="18"
+                    rx="9"
+                    fill="rgba(10, 12, 18, 0.85)"
+                    stroke="rgba(56, 189, 248, 0.4)"
+                    strokeWidth="1"
+                  />
                   <text
                     x={israelPos.x}
-                    y={israelPos.y - 12}
+                    y={israelPos.y - 13}
                     fill="#38bdf8"
-                    fontSize="11"
+                    fontSize="9.5"
                     fontWeight="bold"
                     textAnchor="middle"
                     className="font-mono"
@@ -236,19 +351,29 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                   </text>
                 </g>
 
-                {/* Node: Kolkata */}
+                {/* Node: Kolkata Edge Cluster */}
                 <g
-                  className="cursor-pointer transition-transform hover:scale-110"
+                  className="cursor-pointer group"
                   onClick={() => setSelectedNode(CLUSTER_NODES[0])}
                 >
-                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="18" fill="rgba(16, 185, 129, 0.12)" className="animate-radar" />
-                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="6" fill="#10b981" filter="url(#glow-kolkata)" />
-                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="2.5" fill="#ffffff" />
+                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="10" fill="rgba(16, 185, 129, 0.2)" />
+                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="5" fill="#10b981" />
+                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="2" fill="#ffffff" />
+                  <rect
+                    x={kolkataPos.x - 52}
+                    y={kolkataPos.y - 25}
+                    width="104"
+                    height="18"
+                    rx="9"
+                    fill="rgba(10, 12, 18, 0.85)"
+                    stroke="rgba(16, 185, 129, 0.4)"
+                    strokeWidth="1"
+                  />
                   <text
                     x={kolkataPos.x}
-                    y={kolkataPos.y - 12}
+                    y={kolkataPos.y - 13}
                     fill="#10b981"
-                    fontSize="11"
+                    fontSize="9.5"
                     fontWeight="bold"
                     textAnchor="middle"
                     className="font-mono"
@@ -259,9 +384,9 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
               </svg>
 
               {/* Real-time Telemetry Pill Overlay */}
-              <div className="absolute bottom-3 left-3 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.1] flex items-center gap-2 text-[10px] text-neutral-300 font-mono">
+              <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.1] flex items-center gap-2 text-[10px] text-neutral-300 font-mono">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Active Mesh Sync: Kolkata ⇄ Israel ⇄ US States</span>
+                <span>Synchronized Mesh: Kolkata ⇄ Israel ⇄ US States</span>
               </div>
             </div>
 
