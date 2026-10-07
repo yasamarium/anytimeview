@@ -29,11 +29,16 @@ import {
   ShieldAlert,
   Database,
   Radio,
+  Bell,
+  Send,
+  Wrench,
+  Info,
+  Layers,
 } from 'lucide-react';
 import { AnytimeLogo } from '@/components/AnytimeLogo';
 import { DatabaseMapModal } from '@/components/DatabaseMapModal';
 import { MediaViewerModal } from '@/components/MediaViewerModal';
-import { ViewItem } from '@/lib/db';
+import { ViewItem, SystemUpdate } from '@/lib/db';
 import { CLUSTER_NODES } from '@/lib/config';
 
 interface AdminUser {
@@ -54,25 +59,39 @@ export default function AdminPage() {
   const [authLoading, setAuthLoading] = useState(false);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'files' | 'users' | 'upload' | 'nodes'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'users' | 'updates' | 'upload' | 'nodes'>('files');
 
   // Dashboard state
   const [items, setItems] = useState<ViewItem[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [systemUpdates, setSystemUpdates] = useState<SystemUpdate[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingUpdates, setLoadingUpdates] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ViewItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Upload Form state
+  // Direct Upload Form state
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState('');
+  const [uploadNode, setUploadNode] = useState('Global Geo-Replicated');
   const [uploading, setUploading] = useState(false);
   const [uploadStep, setUploadStep] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // System Update Broadcast Form state
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastContent, setBroadcastContent] = useState('');
+  const [broadcastType, setBroadcastType] = useState<'announcement' | 'feature' | 'maintenance' | 'media'>('announcement');
+  const [broadcastNode, setBroadcastNode] = useState('Global Geo-Replicated');
+  const [broadcastFile, setBroadcastFile] = useState<File | null>(null);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastSuccess, setBroadcastSuccess] = useState<string | null>(null);
+  const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const [deletingUpdateId, setDeletingUpdateId] = useState<string | null>(null);
 
   // Deletion state
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -100,6 +119,7 @@ export default function AdminPage() {
   const loadAllData = () => {
     loadItems();
     loadUsers();
+    loadUpdates();
   };
 
   const loadItems = async () => {
@@ -129,6 +149,21 @@ export default function AdminPage() {
       console.error('Failed to load users:', err);
     } finally {
       setLoadingUsers(false);
+    }
+  };
+
+  const loadUpdates = async () => {
+    setLoadingUpdates(true);
+    try {
+      const res = await fetch('/api/updates');
+      const data = await res.json();
+      if (data.updates) {
+        setSystemUpdates(data.updates);
+      }
+    } catch (err) {
+      console.error('Failed to load system updates:', err);
+    } finally {
+      setLoadingUpdates(false);
     }
   };
 
@@ -165,6 +200,7 @@ export default function AdminPage() {
       setIsAuthenticated(false);
       setItems([]);
       setUsers([]);
+      setSystemUpdates([]);
     } catch {
       setIsAuthenticated(false);
     }
@@ -187,15 +223,15 @@ export default function AdminPage() {
     setUploading(true);
     setUploadError(null);
     setUploadSuccess(null);
-    setUploadStep('Connecting to Kolkata, Israel & US clusters...');
+    setUploadStep(`Distributing to ${uploadNode}...`);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('title', title);
       formData.append('tags', tags);
+      formData.append('targetNode', uploadNode);
 
-      setUploadStep('Broadcasting binary stream across storage nodes...');
       const res = await fetch('/api/items/upload', {
         method: 'POST',
         body: formData,
@@ -206,16 +242,77 @@ export default function AdminPage() {
         throw new Error(data.error || 'Cluster distribution failed');
       }
 
-      setUploadSuccess(`"${data.item.title}" successfully synchronized to distributed storage!`);
+      setUploadSuccess(`"${data.item.title}" successfully synchronized and logged to System Updates!`);
       setFile(null);
       setTitle('');
       setTags('');
       loadItems();
+      loadUpdates();
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload asset');
     } finally {
       setUploading(false);
       setUploadStep(null);
+    }
+  };
+
+  const handlePublishBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastTitle.trim() && !broadcastContent.trim() && !broadcastFile) {
+      alert('Please provide a title, message, or file to broadcast.');
+      return;
+    }
+
+    setBroadcasting(true);
+    setBroadcastError(null);
+    setBroadcastSuccess(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('title', broadcastTitle.trim() || 'System Announcement');
+      formData.append('content', broadcastContent.trim());
+      formData.append('type', broadcastType);
+      formData.append('targetNode', broadcastNode);
+      if (broadcastFile) {
+        formData.append('file', broadcastFile);
+      }
+
+      const res = await fetch('/api/updates', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to publish system update');
+      }
+
+      setBroadcastSuccess('System update successfully broadcasted to live feed!');
+      setBroadcastTitle('');
+      setBroadcastContent('');
+      setBroadcastFile(null);
+      loadUpdates();
+      loadItems();
+    } catch (err: any) {
+      setBroadcastError(err.message || 'Broadcast error');
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
+  const handleDeleteUpdate = async (id: string) => {
+    if (!confirm('Are you sure you want to remove this system update?')) return;
+
+    setDeletingUpdateId(id);
+    try {
+      const res = await fetch(`/api/updates/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete');
+      setSystemUpdates((prev) => prev.filter((u) => u.id !== id));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setDeletingUpdateId(null);
     }
   };
 
@@ -290,11 +387,9 @@ export default function AdminPage() {
     }
   };
 
-  // Total storage across all items
   const totalStorageBytes = items.reduce((acc, item) => acc + (item.fileSize || 0), 0);
   const videoCount = items.filter((i) => i.fileType === 'video').length;
   const imageCount = items.filter((i) => i.fileType === 'image').length;
-  const pdfCount = items.filter((i) => i.fileType === 'pdf').length;
 
   // 1. Loading State
   if (isAuthenticated === null) {
@@ -320,7 +415,7 @@ export default function AdminPage() {
 
           <h1 className="text-xl font-bold text-white tracking-tight">Security Access</h1>
           <p className="text-xs text-neutral-400 mt-1">
-            Authorize administrative console to manage distributed storage nodes and user ledger.
+            Authorize administrative console to manage distributed storage nodes, broadcasts & users.
           </p>
 
           {authError && (
@@ -437,16 +532,16 @@ export default function AdminPage() {
               <Users className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-2xl font-bold text-white">{users.length}</div>
-            <div className="text-[10px] text-neutral-400 mt-1">Registered cloud accounts</div>
+            <div className="text-[10px] text-neutral-400 mt-1">Active drive accounts</div>
           </div>
 
           <div className="p-4 rounded-3xl glass-card border border-white/[0.06]">
             <div className="flex items-center justify-between text-neutral-400 mb-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wider">Stream Media</span>
-              <Film className="w-4 h-4 text-indigo-400" />
+              <span className="text-[11px] font-medium uppercase tracking-wider">System Updates</span>
+              <Bell className="w-4 h-4 text-amber-400" />
             </div>
-            <div className="text-2xl font-bold text-white">{videoCount + imageCount}</div>
-            <div className="text-[10px] text-neutral-400 mt-1">{videoCount} videos &bull; {imageCount} images</div>
+            <div className="text-2xl font-bold text-white">{systemUpdates.length}</div>
+            <div className="text-[10px] text-neutral-400 mt-1">Live broadcasts posted</div>
           </div>
 
           <div className="p-4 rounded-3xl glass-card border border-white/[0.06]">
@@ -463,6 +558,7 @@ export default function AdminPage() {
         <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06] overflow-x-auto">
           {[
             { id: 'files', label: 'All Files & CDN Links', icon: HardDrive, count: items.length },
+            { id: 'updates', label: 'System Updates & Broadcasts', icon: Bell, count: systemUpdates.length },
             { id: 'users', label: 'CloudDrive Users', icon: Users, count: users.length },
             { id: 'upload', label: 'Direct Cluster Upload', icon: Upload },
             { id: 'nodes', label: 'Edge Nodes & Health', icon: Server, count: 3 },
@@ -550,6 +646,11 @@ export default function AdminPage() {
                               @{item.ownerUsername}
                             </span>
                           )}
+                          {item.targetNode && (
+                            <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-white/[0.05] text-neutral-400">
+                              {item.targetNode}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-3 text-xs text-neutral-400 mt-1">
                           <span className="truncate max-w-[200px] text-neutral-400">{item.fileName}</span>
@@ -563,7 +664,6 @@ export default function AdminPage() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                      {/* Copy CDN Link Button */}
                       <button
                         onClick={() => copyCdnLink(item)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
@@ -586,7 +686,6 @@ export default function AdminPage() {
                         )}
                       </button>
 
-                      {/* Preview */}
                       <button
                         onClick={() => setPreviewItem(item)}
                         className="p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-neutral-300 hover:text-white transition-colors cursor-pointer"
@@ -595,7 +694,6 @@ export default function AdminPage() {
                         <Eye className="w-4 h-4" />
                       </button>
 
-                      {/* Delete */}
                       <button
                         onClick={() => handleDeleteItem(item.id, item.title)}
                         disabled={deletingId === item.id}
@@ -616,7 +714,215 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 2: CLOUD USERS DIRECTORY */}
+        {/* TAB 2: SYSTEM UPDATES & BROADCASTS */}
+        {activeTab === 'updates' && (
+          <div className="space-y-6">
+            {/* Post Broadcast Form */}
+            <div className="p-6 sm:p-8 rounded-3xl glass-panel border border-white/[0.08] shadow-xl">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">Broadcast System Update</h2>
+                  <p className="text-xs text-neutral-400">
+                    Publish announcements, release notes, or text updates visible to all users.
+                  </p>
+                </div>
+              </div>
+
+              {broadcastSuccess && (
+                <div className="mb-5 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{broadcastSuccess}</span>
+                </div>
+              )}
+
+              {broadcastError && (
+                <div className="mb-5 p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{broadcastError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handlePublishBroadcast} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                      Broadcast Title
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={broadcastTitle}
+                      onChange={(e) => setBroadcastTitle(e.target.value)}
+                      placeholder="e.g. Node Latency Optimization Complete"
+                      className="w-full bg-white/[0.03] border border-white/[0.08] focus:border-amber-400/50 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                      Update Category
+                    </label>
+                    <select
+                      value={broadcastType}
+                      onChange={(e) => setBroadcastType(e.target.value as any)}
+                      className="w-full bg-neutral-900 border border-white/[0.08] focus:border-amber-400/50 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-white"
+                    >
+                      <option value="announcement">Announcement / General</option>
+                      <option value="feature">Feature Release</option>
+                      <option value="maintenance">Maintenance Note</option>
+                      <option value="media">Media Release</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                    Announcement Message / Text Content
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={broadcastContent}
+                    onChange={(e) => setBroadcastContent(e.target.value)}
+                    placeholder="Write your system update message here. Supports multi-line announcements and release notes..."
+                    className="w-full bg-white/[0.03] border border-white/[0.08] focus:border-amber-400/50 focus:outline-none rounded-xl p-3.5 text-xs text-white placeholder:text-neutral-500 leading-relaxed"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                      Associated Node
+                    </label>
+                    <select
+                      value={broadcastNode}
+                      onChange={(e) => setBroadcastNode(e.target.value)}
+                      className="w-full bg-neutral-900 border border-white/[0.08] focus:border-amber-400/50 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-white"
+                    >
+                      <option value="Global Geo-Replicated">🌐 Global Multi-Cluster (All Nodes)</option>
+                      <option value="Kolkata Node">🇮🇳 Kolkata Node (APAC)</option>
+                      <option value="Israel Gateway">🇮🇱 Israel Gateway (EMEA)</option>
+                      <option value="US Central Core">🇺🇸 US Central Core (Atlantic)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                      Attach Media File <span className="text-neutral-500 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="file"
+                      accept="video/*,image/*,.pdf,application/pdf"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setBroadcastFile(e.target.files[0]);
+                        }
+                      }}
+                      className="w-full text-xs text-neutral-400 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-white/[0.08] file:text-white hover:file:bg-white/[0.15] cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={broadcasting}
+                  className="w-full py-3 rounded-2xl bg-amber-400 text-black font-semibold text-xs hover:bg-amber-300 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-lg shadow-amber-400/10"
+                >
+                  {broadcasting ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                      <span>Broadcasting across nodes...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Publish to System Updates</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* Broadcast History List */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-white">Broadcast History</h3>
+                <button
+                  onClick={loadUpdates}
+                  disabled={loadingUpdates}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] text-xs text-neutral-300 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingUpdates ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {loadingUpdates ? (
+                <div className="space-y-2">
+                  {[1, 2].map((n) => (
+                    <div key={n} className="h-16 rounded-2xl bg-neutral-900/40 animate-pulse" />
+                  ))}
+                </div>
+              ) : systemUpdates.length === 0 ? (
+                <div className="p-8 text-center rounded-3xl glass-card border border-white/[0.06] text-xs text-neutral-400">
+                  No system updates published yet.
+                </div>
+              ) : (
+                <div className="rounded-3xl glass-card border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]">
+                  {systemUpdates.map((update) => (
+                    <div
+                      key={update.id}
+                      className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4 hover:bg-white/[0.02] transition-colors"
+                    >
+                      <div className="space-y-1.5 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            {update.type}
+                          </span>
+                          <span className="text-xs font-semibold text-white">{update.title}</span>
+                          <span className="text-[10px] text-neutral-500 font-mono">
+                            {formatDate(update.createdAt)}
+                          </span>
+                        </div>
+                        {update.content && (
+                          <p className="text-xs text-neutral-300 leading-relaxed whitespace-pre-line line-clamp-2">
+                            {update.content}
+                          </p>
+                        )}
+                        {update.item && (
+                          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/40 text-[11px] text-sky-300 border border-white/[0.06]">
+                            <span>📎 {update.item.title}</span>
+                            <span>&bull;</span>
+                            <span className="text-neutral-400">{update.item.fileType}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleDeleteUpdate(update.id)}
+                          disabled={deletingUpdateId === update.id}
+                          className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-colors disabled:opacity-50 cursor-pointer"
+                          title="Delete Broadcast"
+                        >
+                          {deletingUpdateId === update.id ? (
+                            <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: CLOUD USERS DIRECTORY */}
         {activeTab === 'users' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -698,7 +1004,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 3: DIRECT CLUSTER UPLOAD */}
+        {/* TAB 4: DIRECT CLUSTER UPLOAD */}
         {activeTab === 'upload' && (
           <div className="p-6 sm:p-8 rounded-3xl glass-panel border border-white/[0.08] shadow-xl">
             <div className="flex items-center gap-3 mb-6">
@@ -729,7 +1035,7 @@ export default function AdminPage() {
 
             <form onSubmit={handleUpload} className="space-y-4">
               {/* Drag & Drop File Picker */}
-              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-white/[0.12] hover:border-white/30 rounded-2xl cursor-pointer bg-white/[0.02] hover:bg-white/[0.04] transition-all group">
+              <label className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-white/[0.12] hover:border-white/30 rounded-2xl cursor-pointer bg-white/[0.02] hover:bg-white/[0.04] transition-all group">
                 <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
                   <Upload className="w-8 h-8 text-neutral-500 group-hover:text-neutral-300 mb-2 transition-colors" />
                   <p className="text-xs text-neutral-200 font-medium">
@@ -748,6 +1054,23 @@ export default function AdminPage() {
                   onChange={handleFileChange}
                 />
               </label>
+
+              {/* Node choice */}
+              <div>
+                <label className="block text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1 px-1">
+                  Target Storage Node
+                </label>
+                <select
+                  value={uploadNode}
+                  onChange={(e) => setUploadNode(e.target.value)}
+                  className="w-full bg-neutral-900 border border-white/[0.08] focus:border-white/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-white"
+                >
+                  <option value="Global Geo-Replicated">🌐 Global Multi-Cluster (All 3 Nodes)</option>
+                  <option value="Kolkata Node">🇮🇳 Kolkata Node (APAC Edge)</option>
+                  <option value="Israel Gateway">🇮🇱 Israel Gateway (EMEA Vault)</option>
+                  <option value="US Central Core">🇺🇸 US Central Core (Atlantic)</option>
+                </select>
+              </div>
 
               {/* Title & Tags */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -800,7 +1123,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 4: EDGE NODES & CLUSTER HEALTH */}
+        {/* TAB 5: EDGE NODES & CLUSTER HEALTH */}
         {activeTab === 'nodes' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {CLUSTER_NODES.map((node) => (

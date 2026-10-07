@@ -18,10 +18,23 @@ export interface ViewItem {
   assetId: number;
   uploadedAt: string;
   clusterNodes: string[];
+  targetNode?: string;
   tags: string[];
   ownerUsername?: string;
   ownerId?: string;
   isPublic?: boolean;
+}
+
+export interface SystemUpdate {
+  id: string;
+  title: string;
+  content: string;
+  type: 'announcement' | 'feature' | 'maintenance' | 'media';
+  createdAt: string;
+  item?: ViewItem;
+  targetNode?: string;
+  tags?: string[];
+  author?: string;
 }
 
 // Built-in cluster access credential for zero-configuration serverless deployments
@@ -130,6 +143,7 @@ export async function uploadToStorage(
     tags?: string[];
     ownerUsername?: string;
     ownerId?: string;
+    targetNode?: string;
   }
 ): Promise<{ url: string; assetId: number; fileName: string }> {
   const release = await getOrCreateRelease();
@@ -144,6 +158,7 @@ export async function uploadToStorage(
     type: meta?.fileType || 'image',
     tags: meta?.tags || [],
     u: meta?.ownerUsername || '',
+    node: meta?.targetNode || '',
   });
 
   const uploadUrl = `https://uploads.github.com/repos/${owner}/${DB_REPO}/releases/${release.id}/assets?name=${encodeURIComponent(safeFileName)}&label=${encodeURIComponent(labelData)}`;
@@ -255,6 +270,8 @@ export async function getAllItems(): Promise<ViewItem[]> {
         let fileType = detectFileTypeFromName(asset.name, asset.content_type);
         let tags: string[] = [];
         let ownerUsername: string | undefined = undefined;
+        let targetNode: string | undefined = undefined;
+        let clusterNodes = ['Kolkata Node', 'Israel Gateway', 'US Central Core'];
 
         if (asset.label) {
           try {
@@ -263,6 +280,10 @@ export async function getAllItems(): Promise<ViewItem[]> {
             if (meta.type) fileType = meta.type;
             if (Array.isArray(meta.tags)) tags = meta.tags;
             if (meta.u) ownerUsername = meta.u;
+            if (meta.node) {
+              targetNode = meta.node;
+              clusterNodes = [meta.node];
+            }
           } catch {}
         }
 
@@ -277,7 +298,8 @@ export async function getAllItems(): Promise<ViewItem[]> {
           cdnUrl: `/api/cdn/${itemId}`,
           assetId: asset.id,
           uploadedAt: asset.created_at,
-          clusterNodes: ['Kolkata Node', 'Israel Gateway', 'US Central Core'],
+          clusterNodes,
+          targetNode,
           tags,
           ownerUsername,
           isPublic: true,
@@ -406,4 +428,114 @@ export async function deleteItemById(id: string): Promise<boolean> {
   });
 
   return saveRes.ok;
+}
+
+const SYSTEM_UPDATES_PATH = 'metadata/system_updates.json';
+
+/**
+ * Retrieve all system updates and admin broadcasts
+ */
+export async function getAllSystemUpdates(): Promise<SystemUpdate[]> {
+  const owner = getClusterOwner();
+  const url = `https://api.github.com/repos/${owner}/${DB_REPO}/contents/${SYSTEM_UPDATES_PATH}`;
+
+  try {
+    const res = await fetch(url, { headers: getHeaders(), cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.content) return [];
+    const jsonStr = Buffer.from(data.content, 'base64').toString('utf8');
+    const updates: SystemUpdate[] = JSON.parse(jsonStr);
+    if (!Array.isArray(updates)) return [];
+    return updates.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  } catch (err) {
+    console.error('getAllSystemUpdates error:', err);
+    return [];
+  }
+}
+
+/**
+ * Save a new system update / announcement
+ */
+export async function saveSystemUpdate(update: SystemUpdate): Promise<SystemUpdate[]> {
+  const owner = getClusterOwner();
+  const url = `https://api.github.com/repos/${owner}/${DB_REPO}/contents/${SYSTEM_UPDATES_PATH}`;
+
+  let existing: SystemUpdate[] = [];
+  let sha: string | undefined = undefined;
+
+  try {
+    const res = await fetch(url, { headers: getHeaders(), cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      sha = data.sha;
+      if (data.content) {
+        const jsonStr = Buffer.from(data.content, 'base64').toString('utf8');
+        existing = JSON.parse(jsonStr);
+      }
+    }
+  } catch {}
+
+  const updatedList = [update, ...existing.filter((u) => u.id !== update.id)];
+  const contentBase64 = Buffer.from(JSON.stringify(updatedList, null, 2)).toString('base64');
+
+  const saveRes = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      ...getHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message: `System Broadcast: ${update.title}`,
+      content: contentBase64,
+      ...(sha ? { sha } : {}),
+    }),
+  });
+
+  if (!saveRes.ok) {
+    const errText = await saveRes.text();
+    throw new Error(`Failed to commit system update: ${saveRes.status} - ${errText}`);
+  }
+
+  return updatedList;
+}
+
+/**
+ * Delete a system update
+ */
+export async function deleteSystemUpdate(id: string): Promise<boolean> {
+  const owner = getClusterOwner();
+  const url = `https://api.github.com/repos/${owner}/${DB_REPO}/contents/${SYSTEM_UPDATES_PATH}`;
+
+  try {
+    const res = await fetch(url, { headers: getHeaders(), cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data.content || !data.sha) return false;
+
+    const jsonStr = Buffer.from(data.content, 'base64').toString('utf8');
+    const list: SystemUpdate[] = JSON.parse(jsonStr);
+    const filtered = list.filter((u) => u.id !== id);
+    const contentBase64 = Buffer.from(JSON.stringify(filtered, null, 2)).toString('base64');
+
+    const saveRes = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        ...getHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: `Delete system broadcast ${id}`,
+        content: contentBase64,
+        sha: data.sha,
+      }),
+    });
+
+    return saveRes.ok;
+  } catch (err) {
+    console.error('deleteSystemUpdate error:', err);
+    return false;
+  }
 }

@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
     const file = formData.get('file') as File | null;
     const title = (formData.get('title') as string) || '';
     const tagsRaw = (formData.get('tags') as string) || '';
+    const targetNode = (formData.get('targetNode') as string) || '';
     const isPublic = formData.get('isPublic') !== 'false';
 
     if (!file) {
@@ -71,7 +72,13 @@ export async function POST(req: NextRequest) {
     const ownerUsername = user ? user.username : 'admin';
     const ownerId = user ? user.id : 'admin';
 
-    // 2. Upload to storage cluster release with embedded metadata
+    // 2. Determine cluster nodes based on user's node selection
+    const isSpecificNode = targetNode && targetNode !== 'Global Geo-Replicated';
+    const clusterNodes = isSpecificNode
+      ? [targetNode]
+      : ['Kolkata Node', 'Israel Gateway', 'US Central Core'];
+
+    // 3. Upload to storage cluster release with embedded metadata
     const finalTitle = title.trim() || file.name;
     const uploaded = await uploadToStorage(buffer, file.name, file.type, {
       title: finalTitle,
@@ -79,11 +86,12 @@ export async function POST(req: NextRequest) {
       tags,
       ownerUsername,
       ownerId,
+      targetNode: isSpecificNode ? targetNode : undefined,
     });
 
     const itemId = `view_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    // 3. Build metadata record with direct CDN URL on our domain
+    // 4. Build metadata record with direct CDN URL on our domain
     const newItem: ViewItem = {
       id: itemId,
       title: finalTitle,
@@ -95,15 +103,36 @@ export async function POST(req: NextRequest) {
       cdnUrl: `/api/cdn/${itemId}`,
       assetId: uploaded.assetId,
       uploadedAt: new Date().toISOString(),
-      clusterNodes: ['Kolkata Node', 'Israel Gateway', 'US Central Core'],
+      clusterNodes,
+      targetNode: isSpecificNode ? targetNode : 'Global Geo-Replicated',
       tags,
       ownerUsername,
       ownerId,
       isPublic,
     };
 
-    // 4. Save to distributed metadata repository
+    // 5. Save to distributed metadata repository
     await saveItem(newItem);
+
+    // 6. If uploaded from Admin Panel, auto-broadcast to System Updates!
+    if (isAdmin && !user) {
+      try {
+        const { saveSystemUpdate } = await import('@/lib/db');
+        await saveSystemUpdate({
+          id: `sysup_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          title: finalTitle,
+          content: `New administrative release synchronized across ${clusterNodes.join(', ')}.`,
+          type: 'media',
+          createdAt: new Date().toISOString(),
+          item: newItem,
+          targetNode: isSpecificNode ? targetNode : 'Global Geo-Replicated',
+          tags: ['admin_release', ...tags],
+          author: 'System Admin',
+        });
+      } catch (err) {
+        console.warn('System update auto-publish non-critical error:', err);
+      }
+    }
 
     // 5. Update user storage stats if authenticated user
     if (user) {

@@ -27,10 +27,13 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  Bell,
+  Layers,
 } from 'lucide-react';
 import { AnytimeLogo } from '@/components/AnytimeLogo';
 import { DatabaseMapModal } from '@/components/DatabaseMapModal';
 import { MediaViewerModal } from '@/components/MediaViewerModal';
+import { SystemUpdatesModal } from '@/components/SystemUpdatesModal';
 import { UserAuthModal } from '@/components/UserAuthModal';
 import { ViewItem } from '@/lib/db';
 import { CloudUser } from '@/lib/userDb';
@@ -41,6 +44,7 @@ export default function HomePage() {
   const [filter, setFilter] = useState<'all' | 'video' | 'image' | 'pdf'>('all');
   const [search, setSearch] = useState('');
   const [mapOpen, setMapOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ViewItem | null>(null);
 
   // CloudDrive User State
@@ -58,6 +62,7 @@ export default function HomePage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadTags, setUploadTags] = useState('');
+  const [selectedTargetNode, setSelectedTargetNode] = useState('Global Geo-Replicated');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
@@ -77,7 +82,7 @@ export default function HomePage() {
       const data = await res.json();
       if (data.authenticated && data.user) {
         setUser(data.user);
-        setActiveView('drive'); // Default logged-in users to their personal drive
+        setActiveView('drive');
       } else {
         setUser(null);
       }
@@ -149,6 +154,7 @@ export default function HomePage() {
       formData.append('file', uploadFile);
       formData.append('title', uploadTitle || uploadFile.name);
       formData.append('tags', uploadTags);
+      formData.append('targetNode', selectedTargetNode);
 
       const res = await fetch('/api/items/upload', {
         method: 'POST',
@@ -160,12 +166,11 @@ export default function HomePage() {
         throw new Error(data.error || 'Upload failed');
       }
 
-      setUploadSuccess(`Uploaded and replicated across Kolkata, Israel & US clusters!`);
+      setUploadSuccess(`Replicated successfully on ${selectedTargetNode}!`);
       setUploadFile(null);
       setUploadTitle('');
       setUploadTags('');
 
-      // Refresh items and user storage quota
       await loadItems();
       await checkUserSession();
 
@@ -203,13 +208,21 @@ export default function HomePage() {
     }
   };
 
+  const getNodeBadge = (targetNode?: string) => {
+    if (!targetNode || targetNode.includes('Global')) return '🌐 Multi-Cluster';
+    if (targetNode.includes('Kolkata')) return '🇮🇳 Kolkata Node';
+    if (targetNode.includes('Israel')) return '🇮🇱 Israel Gateway';
+    if (targetNode.includes('US')) return '🇺🇸 US Central Core';
+    return `🌐 ${targetNode}`;
+  };
+
   // Filter items based on active view and filters
   const currentViewItems = items.filter((item) => {
     if (activeView === 'drive') {
       if (!user) return false;
       return item.ownerUsername?.toLowerCase() === user.username?.toLowerCase();
     }
-    return true; // public view shows all
+    return true;
   });
 
   const filteredItems = currentViewItems.filter((item) => {
@@ -271,6 +284,16 @@ export default function HomePage() {
 
           {/* Right Action Controls */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* System Updates Button */}
+            <button
+              onClick={() => setUpdatesOpen(true)}
+              className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 text-xs font-medium text-amber-300 transition-all cursor-pointer group"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+              <span>System Updates</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            </button>
+
             {/* Database in Map Button */}
             <button
               onClick={() => setMapOpen(true)}
@@ -360,7 +383,7 @@ export default function HomePage() {
                   Welcome, @{user.username}
                 </h1>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Your files are geo-replicated and distributed with instant direct CDN endpoints.
+                  Your files are distributed across your chosen cluster nodes with instant direct CDN endpoints.
                 </p>
               </div>
 
@@ -406,7 +429,7 @@ export default function HomePage() {
                 Store, Stream & Embed with Direct CDN URLs
               </h2>
               <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-                Upload videos, images, and documents with instant CDN links hosted on our domain. Geo-replicated across Kolkata, Israel, and US nodes.
+                Upload videos, images, and documents with instant CDN links hosted on our domain. Choose your storage node between Kolkata, Israel, and US.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -552,6 +575,7 @@ export default function HomePage() {
             {filteredItems.map((item) => {
               const cdnStreamUrl = item.cdnUrl || `/api/cdn/${item.id}`;
               const isOwner = user && item.ownerUsername === user.username;
+              const nodeLabel = getNodeBadge(item.targetNode);
 
               return (
                 <motion.div
@@ -649,9 +673,17 @@ export default function HomePage() {
                   {/* Details Footer */}
                   <div className="p-4 sm:p-5">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
-                        {item.title}
-                      </h3>
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
+                          {item.title}
+                        </h3>
+                        {/* Target Node Badge */}
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="text-[10px] font-mono text-neutral-400">
+                            {nodeLabel}
+                          </span>
+                        </div>
+                      </div>
 
                       {/* Owner Delete Button */}
                       {isOwner && (
@@ -684,7 +716,7 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Upload Modal */}
+      {/* Upload Modal with Target Node Selector */}
       <AnimatePresence>
         {uploadModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden">
@@ -711,7 +743,7 @@ export default function HomePage() {
                   <div>
                     <h3 className="text-base font-bold text-white">Upload to CloudDrive</h3>
                     <p className="text-xs text-neutral-400">
-                      Files are distributed to Kolkata, Israel & US nodes.
+                      Select your target database node & generate direct CDN links.
                     </p>
                   </div>
                 </div>
@@ -738,13 +770,13 @@ export default function HomePage() {
               )}
 
               <form onSubmit={handleUploadSubmit} className="mt-5 space-y-4">
-                <label className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-white/[0.12] hover:border-white/30 rounded-2xl cursor-pointer bg-white/[0.02] hover:bg-white/[0.04] transition-all group">
-                  <div className="flex flex-col items-center justify-center p-4 text-center">
-                    <Upload className="w-7 h-7 text-neutral-500 group-hover:text-neutral-300 mb-2 transition-colors" />
+                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/[0.12] hover:border-white/30 rounded-2xl cursor-pointer bg-white/[0.02] hover:bg-white/[0.04] transition-all group">
+                  <div className="flex flex-col items-center justify-center p-3 text-center">
+                    <Upload className="w-6 h-6 text-neutral-500 group-hover:text-neutral-300 mb-1.5 transition-colors" />
                     <p className="text-xs text-neutral-200 font-medium">
                       {uploadFile ? uploadFile.name : 'Select or drag & drop media file'}
                     </p>
-                    <p className="text-[11px] text-neutral-500 mt-1">
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
                       {uploadFile
                         ? `${(uploadFile.size / 1024 / 1024).toFixed(2)} MB`
                         : 'Videos, Images, PDFs'}
@@ -765,6 +797,42 @@ export default function HomePage() {
                     }}
                   />
                 </label>
+
+                {/* Target Database Node Selector */}
+                <div>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center justify-between">
+                    <span>Target Database Node</span>
+                    <span className="text-[10px] text-sky-400 font-mono">Location Choice</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'Global Geo-Replicated', name: 'Global Multi-Cluster', sub: 'All 3 nodes synchronized', icon: '🌐' },
+                      { id: 'Kolkata Node', name: 'Kolkata Node', sub: 'South Asia / APAC Edge', icon: '🇮🇳' },
+                      { id: 'Israel Gateway', name: 'Israel Gateway', sub: 'EMEA / Encrypted Vault', icon: '🇮🇱' },
+                      { id: 'US Central Core', name: 'US Central Core', sub: 'North America / Atlantic Core', icon: '🇺🇸' },
+                    ].map((node) => {
+                      const isSelected = selectedTargetNode === node.id;
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => setSelectedTargetNode(node.id)}
+                          className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-sky-500/15 border-sky-400/50 text-white shadow-sm'
+                              : 'bg-white/[0.02] border-white/[0.06] text-neutral-400 hover:text-white hover:bg-white/[0.05]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs">{node.icon}</span>
+                            <span className="text-xs font-semibold truncate">{node.name}</span>
+                          </div>
+                          <p className="text-[10px] text-neutral-400 truncate mt-0.5">{node.sub}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div>
                   <label className="block text-xs font-medium text-neutral-300 mb-1">
@@ -800,7 +868,7 @@ export default function HomePage() {
                   {uploading ? (
                     <div className="flex items-center gap-2">
                       <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Distributing to clusters...</span>
+                      <span>Distributing to {selectedTargetNode}...</span>
                     </div>
                   ) : (
                     <>
@@ -814,6 +882,13 @@ export default function HomePage() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* System Updates Modal */}
+      <SystemUpdatesModal
+        isOpen={updatesOpen}
+        onClose={() => setUpdatesOpen(false)}
+        onSelectMedia={(mediaItem) => setSelectedItem(mediaItem)}
+      />
 
       {/* User Auth Modal */}
       <UserAuthModal
