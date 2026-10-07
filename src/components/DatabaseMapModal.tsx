@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -14,8 +14,11 @@ import {
   MapPin,
   Radio,
   ArrowRight,
-  Shield,
-  Layers,
+  Plus,
+  Minus,
+  RotateCcw,
+  Navigation,
+  Crosshair,
 } from 'lucide-react';
 import { CLUSTER_NODES, ClusterNode } from '@/lib/config';
 import { SPHERE_PATH, GRATICULE_PATH, LAND_PATH, PRECISE_NODES } from '@/lib/worldData';
@@ -56,7 +59,20 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
     'node-us': 36,
   });
 
+  // Pan & Zoom State (Google Maps Style)
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  // Refs for animation loop to access latest zoom/pan without re-instantiating loop
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  zoomRef.current = zoom;
+  panRef.current = pan;
 
   const kolkataPos = PRECISE_NODES['node-kolkata'];
   const israelPos = PRECISE_NODES['node-israel'];
@@ -125,12 +141,23 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
 
     const render = (now: number) => {
       const elapsed = (now - start) / 1000;
+      const currentZoom = zoomRef.current;
+      const currentPan = panRef.current;
 
       ctx.clearRect(0, 0, 1000, 520);
 
+      ctx.save();
+      // Apply Google Maps Pan & Zoom Matrix
+      ctx.translate(currentPan.x, currentPan.y);
+      ctx.scale(currentZoom, currentZoom);
+
+      // Line scale compensation so lines remain sharp and elegant at any zoom level
+      const lineScale = 1 / Math.pow(currentZoom, 0.65);
+      const dotScale = 1 / Math.pow(currentZoom, 0.7);
+
       // --- SECTION A: INTER-CLUSTER BACKBONE MESH (Muted, Crisp, Minimalist) ---
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 4]);
+      ctx.lineWidth = 1 * lineScale;
+      ctx.setLineDash([2 * lineScale, 4 * lineScale]);
 
       // Backbone 1: US <-> Israel
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
@@ -164,9 +191,9 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
       ) => {
         const t = (elapsed * speed + offset) % 1;
         const pt = getQuadPoint(p0, p1, p2, t);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 1.5 * dotScale, 0, Math.PI * 2);
         ctx.fill();
       };
 
@@ -183,7 +210,7 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
         const redControl = getArcControlPoint(originPos, userPos, 0.2);
 
         // 1. Draw Crisp Solid Red Serving Line (No Glow, Razor Sharp)
-        ctx.lineWidth = 1.6;
+        ctx.lineWidth = 1.6 * lineScale;
         ctx.strokeStyle = '#ef4444'; // Signal Red
         ctx.setLineDash([]);
         ctx.beginPath();
@@ -200,41 +227,41 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
           // Crisp solid red packet dot
           ctx.fillStyle = '#fee2e2'; // White-red core
           ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 2.2, 0, Math.PI * 2);
+          ctx.arc(pt.x, pt.y, 2.2 * dotScale, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.fillStyle = '#ef4444';
           ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 1.2, 0, Math.PI * 2);
+          ctx.arc(pt.x, pt.y, 1.2 * dotScale, 0, Math.PI * 2);
           ctx.fill();
         }
 
         // 3. User Target Reticle / Pulse Animation (Clean 1px circle, no blur)
         const userPulse = (elapsed * 1.2) % 1;
-        const userRadius = 4 + userPulse * 16;
+        const userRadius = (4 + userPulse * 16) * dotScale;
         const userAlpha = Math.max(0, 1 - userPulse);
 
         ctx.strokeStyle = `rgba(239, 68, 68, ${userAlpha.toFixed(2)})`;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1 * lineScale;
         ctx.beginPath();
         ctx.arc(userPos.x, userPos.y, userRadius, 0, Math.PI * 2);
         ctx.stroke();
 
         // Secondary inner reticle ring
-        ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
         ctx.beginPath();
-        ctx.arc(userPos.x, userPos.y, 6, 0, Math.PI * 2);
+        ctx.arc(userPos.x, userPos.y, 6 * dotScale, 0, Math.PI * 2);
         ctx.stroke();
       }
 
       // --- SECTION C: CRISP SUBTLE RADAR ON DATABASE NODES (Clean 1px stroke) ---
       const drawNodeRadar = (pos: { x: number; y: number }, color: string, timeOffset: number) => {
         const cycle = (elapsed * 0.7 + timeOffset) % 1;
-        const radius = 5 + cycle * 14;
+        const radius = (5 + cycle * 14) * dotScale;
         const alpha = Math.max(0, 0.8 - cycle * 0.8);
 
         ctx.strokeStyle = color.replace('ALPHA', alpha.toFixed(3));
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1 * lineScale;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
         ctx.stroke();
@@ -243,6 +270,8 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
       drawNodeRadar(kolkataPos, 'rgba(16, 185, 129, ALPHA)', 0.0);
       drawNodeRadar(israelPos, 'rgba(56, 189, 248, ALPHA)', 0.33);
       drawNodeRadar(usPos, 'rgba(168, 85, 247, ALPHA)', 0.66);
+
+      ctx.restore();
 
       animId = requestAnimationFrame(render);
     };
@@ -253,6 +282,107 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
       cancelAnimationFrame(animId);
     };
   }, [isOpen, userPos, nearestInfo]);
+
+  // Google Maps Zoom Helper Functions
+  const applyClampedZoom = useCallback((newZoom: number, focalX: number, focalY: number) => {
+    const clampedZoom = Math.min(Math.max(1, newZoom), 8);
+    const factor = clampedZoom / zoom;
+
+    const newPanX = focalX - (focalX - pan.x) * factor;
+    const newPanY = focalY - (focalY - pan.y) * factor;
+
+    // Boundaries clamping
+    const minPanX = 1000 - 1000 * clampedZoom;
+    const minPanY = 520 - 520 * clampedZoom;
+
+    setZoom(clampedZoom);
+    setPan({
+      x: Math.min(0, Math.max(minPanX, newPanX)),
+      y: Math.min(0, Math.max(minPanY, newPanY)),
+    });
+  }, [zoom, pan]);
+
+  // Wheel Zoom (Focal point under cursor like Google Maps)
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = ((e.clientX - rect.left) / rect.width) * 1000;
+    const mouseY = ((e.clientY - rect.top) / rect.height) * 520;
+
+    const zoomFactor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+    applyClampedZoom(zoom * zoomFactor, mouseX, mouseY);
+  };
+
+  // Drag Panning
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    setIsDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const scaleX = 1000 / rect.width;
+    const scaleY = 520 / rect.height;
+
+    const dx = (e.clientX - dragStartRef.current.x) * scaleX;
+    const dy = (e.clientY - dragStartRef.current.y) * scaleY;
+
+    const newPanX = dragStartRef.current.panX + dx;
+    const newPanY = dragStartRef.current.panY + dy;
+
+    const minPanX = 1000 - 1000 * zoom;
+    const minPanY = 520 - 520 * zoom;
+
+    setPan({
+      x: Math.min(0, Math.max(minPanX, newPanX)),
+      y: Math.min(0, Math.max(minPanY, newPanY)),
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  // Zoom Button Controls
+  const zoomIn = () => applyClampedZoom(zoom * 1.35, 500, 260);
+  const zoomOut = () => {
+    if (zoom <= 1.1) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    } else {
+      applyClampedZoom(zoom / 1.35, 500, 260);
+    }
+  };
+
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const centerOnUser = () => {
+    if (!userPos) return;
+    const targetZoom = 3.2;
+    const targetPanX = 500 - userPos.x * targetZoom;
+    const targetPanY = 260 - userPos.y * targetZoom;
+    const minPanX = 1000 - 1000 * targetZoom;
+    const minPanY = 520 - 520 * targetZoom;
+    setZoom(targetZoom);
+    setPan({
+      x: Math.min(0, Math.max(minPanX, targetPanX)),
+      y: Math.min(0, Math.max(minPanY, targetPanY)),
+    });
+  };
 
   const triggerPingTest = () => {
     setIsPinging(true);
@@ -265,6 +395,12 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
       setIsPinging(false);
     }, 600);
   };
+
+  // Marker and Text Damped Scale: Scales gracefully with zoom so it never pixelates or blows up
+  // At zoom 1 -> scale 1.0 (9px)
+  // At zoom 4 -> scale 0.38 (13.5px on screen)
+  // At zoom 8 -> scale 0.23 (17px on screen)
+  const markerScale = 1 / Math.pow(zoom, 0.7);
 
   return (
     <AnimatePresence>
@@ -300,11 +436,11 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                     </h2>
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-medium text-emerald-400">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      3 Database Clusters
+                      3 Active Clusters
                     </span>
                   </div>
                   <p className="text-xs text-neutral-400 mt-0.5">
-                    Real-time geo-routing telemetry across Kolkata, Israel, and US States.
+                    Google Maps-style Pan &amp; Zoom &bull; Real-time geo-routing telemetry across Kolkata, Israel, and US.
                   </p>
                 </div>
               </div>
@@ -354,36 +490,48 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
               </div>
             )}
 
-            {/* Geographically Exact World Map Canvas */}
-            <div className="mt-4 relative w-full aspect-[1000/520] rounded-2xl bg-[#07090e] border border-white/[0.08] overflow-hidden select-none shadow-xl">
-              {/* Exact Natural Earth Vector Layer */}
+            {/* Geographically Exact World Map Canvas with Interactive Pan & Zoom */}
+            <div
+              ref={containerRef}
+              onWheel={handleWheel}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              className={`mt-4 relative w-full aspect-[1000/520] rounded-2xl bg-[#07090e] border border-white/[0.08] overflow-hidden select-none shadow-xl ${
+                isDragging ? 'cursor-grabbing' : 'cursor-grab'
+              }`}
+            >
+              {/* Exact Natural Earth Vector Layer with Synced Matrix Transform */}
               <svg
                 viewBox="0 0 1000 520"
                 className="w-full h-full absolute inset-0 pointer-events-none"
               >
-                {/* Earth Sphere Boundary */}
-                <path
-                  d={SPHERE_PATH}
-                  fill="#080c14"
-                  stroke="rgba(255, 255, 255, 0.1)"
-                  strokeWidth="1"
-                />
+                <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+                  {/* Earth Sphere Boundary */}
+                  <path
+                    d={SPHERE_PATH}
+                    fill="#080c14"
+                    stroke="rgba(255, 255, 255, 0.1)"
+                    strokeWidth={1 / Math.pow(zoom, 0.6)}
+                  />
 
-                {/* Curved Latitude/Longitude Grid Lines */}
-                <path
-                  d={GRATICULE_PATH}
-                  fill="none"
-                  stroke="rgba(255, 255, 255, 0.04)"
-                  strokeWidth="0.6"
-                />
+                  {/* Curved Latitude/Longitude Grid Lines */}
+                  <path
+                    d={GRATICULE_PATH}
+                    fill="none"
+                    stroke="rgba(255, 255, 255, 0.04)"
+                    strokeWidth={0.6 / Math.pow(zoom, 0.6)}
+                  />
 
-                {/* Real Exact Landmasses */}
-                <path
-                  d={LAND_PATH}
-                  fill="#141822"
-                  stroke="rgba(255, 255, 255, 0.16)"
-                  strokeWidth="0.8"
-                />
+                  {/* Real Exact Landmasses */}
+                  <path
+                    d={LAND_PATH}
+                    fill="#141822"
+                    stroke="rgba(255, 255, 255, 0.16)"
+                    strokeWidth={0.8 / Math.pow(zoom, 0.6)}
+                  />
+                </g>
               </svg>
 
               {/* 60 FPS Hardware Accelerated Canvas Overlay for Serving Redline & Mesh */}
@@ -394,154 +542,260 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                 className="w-full h-full absolute inset-0 pointer-events-none"
               />
 
-              {/* Interactive Node Anchors & User Location Pin */}
+              {/* Interactive Node Anchors & User Location Pin (Proportionally Scaled Text & Badges) */}
               <svg
                 viewBox="0 0 1000 520"
-                className="w-full h-full absolute inset-0"
+                className="w-full h-full absolute inset-0 pointer-events-none"
               >
-                {/* 1. Database Node: US Central */}
-                <g
-                  className="cursor-pointer"
-                  onClick={() => setSelectedNode(CLUSTER_NODES[2])}
-                >
-                  <circle cx={usPos.x} cy={usPos.y} r="4" fill="#a855f7" />
-                  <circle cx={usPos.x} cy={usPos.y} r="1.8" fill="#ffffff" />
-                  <rect
-                    x={usPos.x - 38}
-                    y={usPos.y - 22}
-                    width="76"
-                    height="16"
-                    rx="8"
-                    fill="#0f1118"
-                    stroke="rgba(168, 85, 247, 0.5)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={usPos.x}
-                    y={usPos.y - 11}
-                    fill="#c084fc"
-                    fontSize="9"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    className="font-mono"
+                <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+                  {/* 1. Database Node: US Central */}
+                  <g
+                    transform={`translate(${usPos.x}, ${usPos.y}) scale(${markerScale})`}
+                    className="pointer-events-auto cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedNode(CLUSTER_NODES[2]);
+                    }}
                   >
-                    US &bull; {pings['node-us']}ms
-                  </text>
-                </g>
-
-                {/* 2. Database Node: Israel Gateway */}
-                <g
-                  className="cursor-pointer"
-                  onClick={() => setSelectedNode(CLUSTER_NODES[1])}
-                >
-                  <circle cx={israelPos.x} cy={israelPos.y} r="4" fill="#38bdf8" />
-                  <circle cx={israelPos.x} cy={israelPos.y} r="1.8" fill="#ffffff" />
-                  <rect
-                    x={israelPos.x - 42}
-                    y={israelPos.y - 22}
-                    width="84"
-                    height="16"
-                    rx="8"
-                    fill="#0f1118"
-                    stroke="rgba(56, 189, 248, 0.5)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={israelPos.x}
-                    y={israelPos.y - 11}
-                    fill="#38bdf8"
-                    fontSize="9"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    className="font-mono"
-                  >
-                    Israel &bull; {pings['node-israel']}ms
-                  </text>
-                </g>
-
-                {/* 3. Database Node: Kolkata Node */}
-                <g
-                  className="cursor-pointer"
-                  onClick={() => setSelectedNode(CLUSTER_NODES[0])}
-                >
-                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="4" fill="#10b981" />
-                  <circle cx={kolkataPos.x} cy={kolkataPos.y} r="1.8" fill="#ffffff" />
-                  <rect
-                    x={kolkataPos.x - 45}
-                    y={kolkataPos.y - 22}
-                    width="90"
-                    height="16"
-                    rx="8"
-                    fill="#0f1118"
-                    stroke="rgba(16, 185, 129, 0.5)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={kolkataPos.x}
-                    y={kolkataPos.y - 11}
-                    fill="#10b981"
-                    fontSize="9"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    className="font-mono"
-                  >
-                    Kolkata &bull; {pings['node-kolkata']}ms
-                  </text>
-                </g>
-
-                {/* 4. USER LOCATION PIN (Clean Target Reticle & Red Pin) */}
-                {userPos && userGeo && (
-                  <g className="cursor-pointer">
-                    {/* Crosshair lines */}
-                    <line
-                      x1={userPos.x - 7}
-                      y1={userPos.y}
-                      x2={userPos.x + 7}
-                      y2={userPos.y}
-                      stroke="#ef4444"
-                      strokeWidth="1"
-                    />
-                    <line
-                      x1={userPos.x}
-                      y1={userPos.y - 7}
-                      x2={userPos.x}
-                      y2={userPos.y + 7}
-                      stroke="#ef4444"
-                      strokeWidth="1"
-                    />
-
-                    {/* Red Center Target */}
-                    <circle cx={userPos.x} cy={userPos.y} r="3.2" fill="#ef4444" />
-                    <circle cx={userPos.x} cy={userPos.y} r="1.4" fill="#ffffff" />
-
-                    {/* Badge */}
+                    <circle cx={0} cy={0} r={4} fill="#a855f7" />
+                    <circle cx={0} cy={0} r={1.8} fill="#ffffff" />
                     <rect
-                      x={userPos.x - 50}
-                      y={userPos.y + 10}
-                      width="100"
-                      height="17"
-                      rx="8.5"
-                      fill="#180c0c"
-                      stroke="#ef4444"
-                      strokeWidth="1.2"
+                      x={-38}
+                      y={-22}
+                      width={76}
+                      height={16}
+                      rx={8}
+                      fill="#0f1118"
+                      stroke="rgba(168, 85, 247, 0.6)"
+                      strokeWidth={1}
                     />
                     <text
-                      x={userPos.x}
-                      y={userPos.y + 22}
-                      fill="#ffffff"
-                      fontSize="9"
+                      x={0}
+                      y={-11}
+                      fill="#c084fc"
+                      fontSize={9}
                       fontWeight="bold"
                       textAnchor="middle"
                       className="font-mono"
                     >
-                      YOU &bull; {userGeo.city}
+                      US &bull; {pings['node-us']}ms
                     </text>
+                    {zoom > 2.5 && (
+                      <text
+                        x={0}
+                        y={14}
+                        fill="#94a3b8"
+                        fontSize={7.5}
+                        textAnchor="middle"
+                        className="font-mono"
+                      >
+                        Virginia Enterprise Core
+                      </text>
+                    )}
                   </g>
-                )}
+
+                  {/* 2. Database Node: Israel Gateway */}
+                  <g
+                    transform={`translate(${israelPos.x}, ${israelPos.y}) scale(${markerScale})`}
+                    className="pointer-events-auto cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedNode(CLUSTER_NODES[1]);
+                    }}
+                  >
+                    <circle cx={0} cy={0} r={4} fill="#38bdf8" />
+                    <circle cx={0} cy={0} r={1.8} fill="#ffffff" />
+                    <rect
+                      x={-42}
+                      y={-22}
+                      width={84}
+                      height={16}
+                      rx={8}
+                      fill="#0f1118"
+                      stroke="rgba(56, 189, 248, 0.6)"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={0}
+                      y={-11}
+                      fill="#38bdf8"
+                      fontSize={9}
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      className="font-mono"
+                    >
+                      Israel &bull; {pings['node-israel']}ms
+                    </text>
+                    {zoom > 2.5 && (
+                      <text
+                        x={0}
+                        y={14}
+                        fill="#94a3b8"
+                        fontSize={7.5}
+                        textAnchor="middle"
+                        className="font-mono"
+                      >
+                        Tel Aviv Cryptographic Vault
+                      </text>
+                    )}
+                  </g>
+
+                  {/* 3. Database Node: Kolkata Node */}
+                  <g
+                    transform={`translate(${kolkataPos.x}, ${kolkataPos.y}) scale(${markerScale})`}
+                    className="pointer-events-auto cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedNode(CLUSTER_NODES[0]);
+                    }}
+                  >
+                    <circle cx={0} cy={0} r={4} fill="#10b981" />
+                    <circle cx={0} cy={0} r={1.8} fill="#ffffff" />
+                    <rect
+                      x={-45}
+                      y={-22}
+                      width={90}
+                      height={16}
+                      rx={8}
+                      fill="#0f1118"
+                      stroke="rgba(16, 185, 129, 0.6)"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={0}
+                      y={-11}
+                      fill="#10b981"
+                      fontSize={9}
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      className="font-mono"
+                    >
+                      Kolkata &bull; {pings['node-kolkata']}ms
+                    </text>
+                    {zoom > 2.5 && (
+                      <text
+                        x={0}
+                        y={14}
+                        fill="#94a3b8"
+                        fontSize={7.5}
+                        textAnchor="middle"
+                        className="font-mono"
+                      >
+                        APAC Edge Cluster
+                      </text>
+                    )}
+                  </g>
+
+                  {/* 4. USER LOCATION PIN (Proportionally Scaled with Zoom) */}
+                  {userPos && userGeo && (
+                    <g
+                      transform={`translate(${userPos.x}, ${userPos.y}) scale(${markerScale})`}
+                      className="pointer-events-auto cursor-pointer"
+                    >
+                      {/* Crosshairs */}
+                      <line
+                        x1={-8}
+                        y1={0}
+                        x2={8}
+                        y2={0}
+                        stroke="#ef4444"
+                        strokeWidth={1}
+                      />
+                      <line
+                        x1={0}
+                        y1={-8}
+                        x2={0}
+                        y2={8}
+                        stroke="#ef4444"
+                        strokeWidth={1}
+                      />
+
+                      {/* Red Center Target */}
+                      <circle cx={0} cy={0} r={3.2} fill="#ef4444" />
+                      <circle cx={0} cy={0} r={1.4} fill="#ffffff" />
+
+                      {/* Badge */}
+                      <rect
+                        x={-52}
+                        y={10}
+                        width={104}
+                        height={18}
+                        rx={9}
+                        fill="#180c0c"
+                        stroke="#ef4444"
+                        strokeWidth={1.2}
+                      />
+                      <text
+                        x={0}
+                        y={22.5}
+                        fill="#ffffff"
+                        fontSize={9}
+                        fontWeight="bold"
+                        textAnchor="middle"
+                        className="font-mono"
+                      >
+                        YOU &bull; {userGeo.city}
+                      </text>
+                      {zoom > 2.2 && (
+                        <text
+                          x={0}
+                          y={37}
+                          fill="#f87171"
+                          fontSize={7.5}
+                          textAnchor="middle"
+                          className="font-mono"
+                        >
+                          {userGeo.ip}
+                        </text>
+                      )}
+                    </g>
+                  )}
+                </g>
               </svg>
 
-              {/* Legend in corner */}
-              <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/[0.08] flex items-center gap-3 text-[10px] text-neutral-300 font-mono">
+              {/* Google Maps On-Screen Zoom Controls (Top Right) */}
+              <div className="absolute top-3 right-3 flex flex-col gap-1.5 z-20">
+                <div className="bg-black/80 backdrop-blur-md rounded-xl border border-white/[0.1] p-1 flex flex-col items-center shadow-lg">
+                  <button
+                    onClick={zoomIn}
+                    className="p-1.5 rounded-lg hover:bg-white/[0.15] text-neutral-300 hover:text-white transition-colors"
+                    title="Zoom In (+)"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <span className="text-[10px] font-mono py-1 font-semibold text-neutral-400">
+                    {zoom.toFixed(1)}x
+                  </span>
+                  <button
+                    onClick={zoomOut}
+                    className="p-1.5 rounded-lg hover:bg-white/[0.15] text-neutral-300 hover:text-white transition-colors"
+                    title="Zoom Out (-)"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <button
+                  onClick={resetView}
+                  className="p-2 rounded-xl bg-black/80 backdrop-blur-md border border-white/[0.1] hover:bg-white/[0.15] text-neutral-300 hover:text-white transition-colors shadow-lg flex items-center justify-center"
+                  title="Reset World View (1.0x)"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+
+                {userPos && (
+                  <button
+                    onClick={centerOnUser}
+                    className="p-2 rounded-xl bg-black/80 backdrop-blur-md border border-red-500/40 hover:bg-red-500/20 text-red-400 transition-colors shadow-lg flex items-center justify-center"
+                    title="Focus on Your Location"
+                  >
+                    <Crosshair className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Bottom Navigation Hint & Legend */}
+              <div className="absolute bottom-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/[0.08] flex items-center gap-3 text-[10px] text-neutral-300 font-mono pointer-events-none">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 bg-red-500" />
                   <span className="text-red-400 font-bold">Serving Redline</span>
@@ -550,6 +804,9 @@ export function DatabaseMapModal({ isOpen, onClose }: DatabaseMapModalProps) {
                   <span className="w-2.5 h-0.5 bg-white/30 border-dashed" />
                   <span>Inter-Cluster Mesh</span>
                 </div>
+                <span className="hidden sm:inline text-neutral-500">
+                  &bull; Scroll to Zoom, Drag to Pan
+                </span>
               </div>
             </div>
 
