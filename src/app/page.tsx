@@ -13,22 +13,21 @@ import {
   HardDrive,
   Calendar,
   Sparkles,
-  ArrowUpRight,
   Upload,
   Copy,
   Check,
-  User,
   LogOut,
   FolderLock,
   Plus,
   Trash2,
-  Share2,
   Cloud,
   CheckCircle2,
   AlertCircle,
   X,
   Bell,
-  Layers,
+  Lock,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { AnytimeLogo } from '@/components/AnytimeLogo';
 import { DatabaseMapModal } from '@/components/DatabaseMapModal';
@@ -51,7 +50,6 @@ export default function HomePage() {
   const [user, setUser] = useState<Partial<CloudUser> | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [activeView, setActiveView] = useState<'public' | 'drive'>('public');
 
   // Direct CDN Copy State
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -70,28 +68,32 @@ export default function HomePage() {
   // Deleting user's item
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Fetch Session & Items
+  // Fetch Session & Items on mount
   useEffect(() => {
     checkUserSession();
-    loadItems();
   }, []);
 
   const checkUserSession = async () => {
+    setLoading(true);
     try {
       const res = await fetch('/api/auth/me');
       const data = await res.json();
       if (data.authenticated && data.user) {
         setUser(data.user);
-        setActiveView('drive');
+        await loadUserItems();
       } else {
         setUser(null);
+        setItems([]);
       }
     } catch {
       setUser(null);
+      setItems([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const loadItems = async () => {
+  const loadUserItems = async () => {
     try {
       const res = await fetch('/api/items');
       const data = await res.json();
@@ -99,9 +101,7 @@ export default function HomePage() {
         setItems(data.items);
       }
     } catch (err) {
-      console.error('Error fetching stream items:', err);
-    } finally {
-      setLoading(false);
+      console.error('Error fetching user drive items:', err);
     }
   };
 
@@ -109,16 +109,18 @@ export default function HomePage() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
-      setActiveView('public');
+      setItems([]);
     } catch {
       setUser(null);
+      setItems([]);
     }
   };
 
-  const handleAuthSuccess = (authedUser: Partial<CloudUser>) => {
+  const handleAuthSuccess = async (authedUser: Partial<CloudUser>) => {
     setUser(authedUser);
-    setActiveView('drive');
-    loadItems();
+    setLoading(true);
+    await loadUserItems();
+    setLoading(false);
   };
 
   const copyDirectCdn = (e: React.MouseEvent, item: ViewItem) => {
@@ -171,7 +173,7 @@ export default function HomePage() {
       setUploadTitle('');
       setUploadTags('');
 
-      await loadItems();
+      await loadUserItems();
       await checkUserSession();
 
       setTimeout(() => {
@@ -216,16 +218,8 @@ export default function HomePage() {
     return `🌐 ${targetNode}`;
   };
 
-  // Filter items based on active view and filters
-  const currentViewItems = items.filter((item) => {
-    if (activeView === 'drive') {
-      if (!user) return false;
-      return item.ownerUsername?.toLowerCase() === user.username?.toLowerCase();
-    }
-    return true;
-  });
-
-  const filteredItems = currentViewItems.filter((item) => {
+  // Filter ONLY current user's files
+  const filteredItems = items.filter((item) => {
     const matchesFilter = filter === 'all' || item.fileType === filter;
     const matchesSearch =
       item.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -278,7 +272,7 @@ export default function HomePage() {
               <AnytimeLogo size="md" showText={true} />
             </Link>
             <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-[10px] font-mono text-sky-400 font-medium">
-              CloudDrive & CDN
+              Private CloudDrive
             </span>
           </div>
 
@@ -290,7 +284,7 @@ export default function HomePage() {
               className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 text-xs font-medium text-amber-300 transition-all cursor-pointer group"
             >
               <Bell className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
-              <span>System Updates</span>
+              <span className="hidden sm:inline">System Updates</span>
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             </button>
 
@@ -332,7 +326,7 @@ export default function HomePage() {
                   <button
                     onClick={handleUserLogout}
                     className="p-1.5 rounded-full bg-white/[0.04] hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-colors cursor-pointer"
-                    title="Log Out"
+                    title="Log Out of CloudDrive"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                   </button>
@@ -367,351 +361,353 @@ export default function HomePage() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8">
-        {/* CloudDrive Hero / Status Bar if User is Logged In */}
+        {/* CASE 1: LOGGED IN USER -> SHOW THEIR PRIVATE CLOUDDRIVE */}
         {user ? (
-          <div className="mb-8 p-5 sm:p-6 rounded-3xl glass-panel border border-white/[0.08] relative overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-sky-400 font-semibold uppercase tracking-wider">
-                    Personal CloudDrive
-                  </span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span className="text-[11px] text-neutral-400 font-mono">Nodes: Kolkata • Israel • US</span>
+          <div>
+            {/* User Drive Header Box */}
+            <div className="mb-8 p-5 sm:p-6 rounded-3xl glass-panel border border-white/[0.08] relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-sky-400 font-semibold uppercase tracking-wider flex items-center gap-1">
+                      <Lock className="w-3 h-3 text-sky-400" />
+                      <span>Private Storage Vault</span>
+                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-[11px] text-neutral-400 font-mono">
+                      Isolated Account: @{user.username}
+                    </span>
+                  </div>
+                  <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">
+                    My CloudDrive
+                  </h1>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Your personal files are 100% private. Only you can view your uploads and generate direct CDN links.
+                  </p>
                 </div>
-                <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">
-                  Welcome, @{user.username}
-                </h1>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Your files are distributed across your chosen cluster nodes with instant direct CDN endpoints.
-                </p>
+
+                {/* Quick Upload Button */}
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => setUploadModalOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all shadow-lg cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload to Drive</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Quick Actions */}
-              <div className="flex items-center gap-2.5">
+              {/* Storage Stats Bar */}
+              <div className="mt-5 pt-4 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-neutral-400">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-3.5 h-3.5 text-sky-400" />
+                  <span>
+                    Storage Used:{' '}
+                    <strong className="text-white font-mono">{formatFileSize(user.storageUsed || 0)}</strong>
+                  </span>
+                  <span>&bull;</span>
+                  <span>
+                    My Files: <strong className="text-white font-mono">{items.length}</strong>
+                  </span>
+                </div>
+                <div className="text-[11px] text-neutral-400">
+                  Direct CDN streaming endpoints generated on your domain
+                </div>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+              {/* Filter Pills */}
+              <div className="flex items-center gap-1 p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] self-start">
+                {[
+                  { id: 'all', label: 'All Files' },
+                  { id: 'video', label: 'Videos', icon: Film },
+                  { id: 'image', label: 'Images', icon: ImageIcon },
+                  { id: 'pdf', label: 'Documents', icon: FileText },
+                ].map((tab) => {
+                  const active = filter === tab.id;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setFilter(tab.id as any)}
+                      className={`relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                        active ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      {active && (
+                        <motion.div
+                          layoutId="filter-pill"
+                          className="absolute inset-0 bg-white/[0.1] rounded-xl border border-white/[0.1]"
+                          transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                        />
+                      )}
+                      {Icon && <Icon className="w-3.5 h-3.5 relative z-10" />}
+                      <span className="relative z-10">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Search Box */}
+              <div className="relative w-full md:w-64">
+                <Search className="absolute left-3.5 top-2.5 w-3.5 h-3.5 text-neutral-500" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search my files..."
+                  className="w-full bg-white/[0.03] border border-white/[0.06] focus:border-white/20 focus:outline-none rounded-xl pl-9 pr-3 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Media Grid */}
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="h-64 rounded-3xl bg-neutral-900/40 border border-white/[0.04] animate-pulse"
+                  />
+                ))}
+              </div>
+            ) : filteredItems.length === 0 ? (
+              <div className="text-center py-20 px-4 glass-card rounded-3xl max-w-lg mx-auto border border-white/[0.06]">
+                <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-4 text-neutral-500">
+                  <FolderLock className="w-6 h-6 text-sky-400" />
+                </div>
+                <h3 className="text-base font-semibold text-neutral-200">
+                  {search ? 'No matching files found' : 'Your CloudDrive is empty'}
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1 max-w-xs mx-auto">
+                  {search
+                    ? 'No items match your search in your drive.'
+                    : 'Upload your first file to get direct CDN streaming links on your domain.'}
+                </p>
+
                 <button
                   onClick={() => setUploadModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all shadow-lg cursor-pointer"
+                  className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 text-xs font-semibold text-white shadow-md transition-all cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>Upload to CloudDrive</span>
+                  <span>Upload File</span>
                 </button>
               </div>
-            </div>
-
-            {/* Storage Progress Bar */}
-            <div className="mt-5 pt-4 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-neutral-400">
-              <div className="flex items-center gap-2">
-                <HardDrive className="w-3.5 h-3.5 text-sky-400" />
-                <span>
-                  Storage Used:{' '}
-                  <strong className="text-white font-mono">{formatFileSize(user.storageUsed || 0)}</strong>
-                </span>
-                <span>&bull;</span>
-                <span>
-                  Total Files: <strong className="text-white font-mono">{user.filesCount || 0}</strong>
-                </span>
-              </div>
-              <div className="text-[11px] text-neutral-400">
-                Direct CDN URLs generated on your own domain
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Non-logged in Welcome Banner */
-          <div className="mb-8 p-5 sm:p-6 rounded-3xl glass-panel border border-white/[0.08] flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-300 text-[11px] font-semibold mb-2">
-                <Sparkles className="w-3 h-3" />
-                <span>Free Distributed Cloud Storage</span>
-              </div>
-              <h2 className="text-lg sm:text-xl font-bold text-white">
-                Store, Stream & Embed with Direct CDN URLs
-              </h2>
-              <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-                Upload videos, images, and documents with instant CDN links hosted on our domain. Choose your storage node between Kolkata, Israel, and US.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  setAuthMode('signup');
-                  setAuthModalOpen(true);
-                }}
-                className="px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all shadow-lg cursor-pointer"
-              >
-                Create Free Drive
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* View Switcher & Filter Controls */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* View Switcher: My CloudDrive vs Public Stream */}
-            {user && (
-              <div className="flex rounded-2xl bg-white/[0.04] p-1 border border-white/[0.06]">
-                <button
-                  onClick={() => setActiveView('drive')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                    activeView === 'drive'
-                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 shadow-sm'
-                      : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  <FolderLock className="w-3.5 h-3.5" />
-                  <span>My CloudDrive</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('public')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                    activeView === 'public'
-                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 shadow-sm'
-                      : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>Public Stream</span>
-                </button>
-              </div>
-            )}
-
-            {/* Filter Pills */}
-            <div className="flex items-center gap-1 p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
-              {[
-                { id: 'all', label: 'All' },
-                { id: 'video', label: 'Videos', icon: Film },
-                { id: 'image', label: 'Images', icon: ImageIcon },
-                { id: 'pdf', label: 'Docs', icon: FileText },
-              ].map((tab) => {
-                const active = filter === tab.id;
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setFilter(tab.id as any)}
-                    className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
-                      active ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
-                    }`}
-                  >
-                    {active && (
-                      <motion.div
-                        layoutId="filter-pill"
-                        className="absolute inset-0 bg-white/[0.1] rounded-xl border border-white/[0.1]"
-                        transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-                      />
-                    )}
-                    {Icon && <Icon className="w-3.5 h-3.5 relative z-10" />}
-                    <span className="relative z-10">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Search Box */}
-          <div className="relative w-full md:w-64">
-            <Search className="absolute left-3.5 top-2.5 w-3.5 h-3.5 text-neutral-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search files..."
-              className="w-full bg-white/[0.03] border border-white/[0.06] focus:border-white/20 focus:outline-none rounded-xl pl-9 pr-3 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-500 transition-colors"
-            />
-          </div>
-        </div>
-
-        {/* Media Grid */}
-        {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[1, 2, 3, 4, 5, 6].map((n) => (
-              <div
-                key={n}
-                className="h-64 rounded-3xl bg-neutral-900/40 border border-white/[0.04] animate-pulse"
-              />
-            ))}
-          </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="text-center py-20 px-4 glass-card rounded-3xl max-w-lg mx-auto border border-white/[0.06]">
-            <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-4 text-neutral-500">
-              <Cloud className="w-6 h-6" />
-            </div>
-            <h3 className="text-base font-semibold text-neutral-200">
-              {activeView === 'drive' ? 'Your CloudDrive is empty' : 'No media found'}
-            </h3>
-            <p className="text-xs text-neutral-400 mt-1 max-w-xs mx-auto">
-              {activeView === 'drive'
-                ? 'Upload your first file to get instant direct CDN streaming links.'
-                : search
-                ? 'No items match your search query.'
-                : 'No public content has been shared yet.'}
-            </p>
-
-            {user ? (
-              <button
-                onClick={() => setUploadModalOpen(true)}
-                className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 text-xs font-semibold text-white shadow-md transition-all cursor-pointer"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <span>Upload to CloudDrive</span>
-              </button>
             ) : (
-              <button
-                onClick={() => {
-                  setAuthMode('signup');
-                  setAuthModalOpen(true);
-                }}
-                className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Create CloudDrive Account</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredItems.map((item) => {
-              const cdnStreamUrl = item.cdnUrl || `/api/cdn/${item.id}`;
-              const isOwner = user && item.ownerUsername === user.username;
-              const nodeLabel = getNodeBadge(item.targetNode);
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredItems.map((item) => {
+                  const cdnStreamUrl = item.cdnUrl || `/api/cdn/${item.id}`;
+                  const nodeLabel = getNodeBadge(item.targetNode);
 
-              return (
-                <motion.div
-                  key={item.id}
-                  layout
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25 }}
-                  onClick={() => setSelectedItem(item)}
-                  className="group cursor-pointer rounded-3xl glass-card overflow-hidden border border-white/[0.06] hover:border-white/[0.18] transition-all flex flex-col justify-between relative"
-                >
-                  {/* Media Preview Box */}
-                  <div className="relative aspect-[16/10] bg-black/60 overflow-hidden flex items-center justify-center">
-                    {item.fileType === 'video' && (
-                      <>
-                        <video
-                          src={cdnStreamUrl}
-                          preload="metadata"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition-colors">
-                          <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform">
-                            <Play className="w-5 h-5 ml-0.5 fill-white" />
-                          </div>
-                        </div>
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-sky-400 flex items-center gap-1 border border-white/[0.08]">
-                          <Film className="w-3 h-3" />
-                          <span>VIDEO</span>
-                        </div>
-                      </>
-                    )}
-
-                    {item.fileType === 'image' && (
-                      <>
-                        <img
-                          src={cdnStreamUrl}
-                          alt={item.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-emerald-400 flex items-center gap-1 border border-white/[0.08]">
-                          <ImageIcon className="w-3 h-3" />
-                          <span>IMAGE</span>
-                        </div>
-                      </>
-                    )}
-
-                    {item.fileType === 'pdf' && (
-                      <div className="w-full h-full bg-gradient-to-tr from-pink-950/20 via-neutral-900 to-black flex flex-col items-center justify-center p-6 text-center group-hover:bg-black/80 transition-colors">
-                        <div className="w-12 h-12 rounded-2xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
-                          <FileText className="w-6 h-6 text-pink-400" />
-                        </div>
-                        <span className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider">
-                          Document / PDF
-                        </span>
-                        <span className="text-[10px] text-neutral-500 mt-1">Tap to read inline</span>
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-pink-400 flex items-center gap-1 border border-white/[0.08]">
-                          <FileText className="w-3 h-3" />
-                          <span>PDF</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Owner Tag Badge */}
-                    {item.ownerUsername && (
-                      <div className="absolute bottom-3 left-3 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-md text-[10px] font-mono text-sky-300 border border-white/[0.08]">
-                        @{item.ownerUsername}
-                      </div>
-                    )}
-
-                    {/* Direct CDN Link Copy Button on Hover */}
-                    <button
-                      onClick={(e) => copyDirectCdn(e, item)}
-                      className={`absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1.5 backdrop-blur-md border shadow-lg transition-all cursor-pointer ${
-                        copiedId === item.id
-                          ? 'bg-emerald-500 text-white border-emerald-400 scale-105'
-                          : 'bg-black/70 text-sky-300 hover:text-white hover:bg-black/90 border-white/20'
-                      }`}
-                      title="Copy Direct CDN URL on our domain"
+                  return (
+                    <motion.div
+                      key={item.id}
+                      layout
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.25 }}
+                      onClick={() => setSelectedItem(item)}
+                      className="group cursor-pointer rounded-3xl glass-card overflow-hidden border border-white/[0.06] hover:border-white/[0.18] transition-all flex flex-col justify-between relative"
                     >
-                      {copiedId === item.id ? (
-                        <>
-                          <Check className="w-3 h-3" />
-                          <span>Copied!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>CDN Link</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                      {/* Media Preview Box */}
+                      <div className="relative aspect-[16/10] bg-black/60 overflow-hidden flex items-center justify-center">
+                        {item.fileType === 'video' && (
+                          <>
+                            <video
+                              src={cdnStreamUrl}
+                              preload="metadata"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition-colors">
+                              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform">
+                                <Play className="w-5 h-5 ml-0.5 fill-white" />
+                              </div>
+                            </div>
+                            <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-sky-400 flex items-center gap-1 border border-white/[0.08]">
+                              <Film className="w-3 h-3" />
+                              <span>VIDEO</span>
+                            </div>
+                          </>
+                        )}
 
-                  {/* Details Footer */}
-                  <div className="p-4 sm:p-5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
-                          {item.title}
-                        </h3>
-                        {/* Target Node Badge */}
-                        <div className="mt-1 flex items-center gap-1.5">
-                          <span className="text-[10px] font-mono text-neutral-400">
-                            {nodeLabel}
+                        {item.fileType === 'image' && (
+                          <>
+                            <img
+                              src={cdnStreamUrl}
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                            />
+                            <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-emerald-400 flex items-center gap-1 border border-white/[0.08]">
+                              <ImageIcon className="w-3 h-3" />
+                              <span>IMAGE</span>
+                            </div>
+                          </>
+                        )}
+
+                        {item.fileType === 'pdf' && (
+                          <div className="w-full h-full bg-gradient-to-tr from-pink-950/20 via-neutral-900 to-black flex flex-col items-center justify-center p-6 text-center group-hover:bg-black/80 transition-colors">
+                            <div className="w-12 h-12 rounded-2xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                              <FileText className="w-6 h-6 text-pink-400" />
+                            </div>
+                            <span className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider">
+                              Document / PDF
+                            </span>
+                            <span className="text-[10px] text-neutral-500 mt-1">Tap to read inline</span>
+                            <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-pink-400 flex items-center gap-1 border border-white/[0.08]">
+                              <FileText className="w-3 h-3" />
+                              <span>PDF</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Direct CDN Link Copy Button on Hover */}
+                        <button
+                          onClick={(e) => copyDirectCdn(e, item)}
+                          className={`absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1.5 backdrop-blur-md border shadow-lg transition-all cursor-pointer ${
+                            copiedId === item.id
+                              ? 'bg-emerald-500 text-white border-emerald-400 scale-105'
+                              : 'bg-black/70 text-sky-300 hover:text-white hover:bg-black/90 border-white/20'
+                          }`}
+                          title="Copy Direct CDN URL on our domain"
+                        >
+                          {copiedId === item.id ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>CDN Link</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Details Footer */}
+                      <div className="p-4 sm:p-5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
+                              {item.title}
+                            </h3>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-neutral-400">
+                                {nodeLabel}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Delete from my drive button */}
+                          <button
+                            onClick={(e) => handleDeleteMyItem(e, item)}
+                            disabled={deletingId === item.id}
+                            className="text-neutral-500 hover:text-red-400 transition-colors p-1 cursor-pointer shrink-0"
+                            title="Remove from my CloudDrive"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-neutral-400 mt-2.5 pt-2.5 border-t border-white/[0.05]">
+                          <span className="flex items-center gap-1 text-[11px]">
+                            <HardDrive className="w-3 h-3 text-neutral-500" />
+                            {formatFileSize(item.fileSize)}
+                          </span>
+                          <span className="flex items-center gap-1 text-[11px]">
+                            <Calendar className="w-3 h-3 text-neutral-500" />
+                            {formatDate(item.uploadedAt)}
                           </span>
                         </div>
                       </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* CASE 2: GUEST / NOT LOGGED IN -> SECURE PRIVATE LANDING PAGE (NO FILES EXPOSED) */
+          <div className="py-8 sm:py-12 max-w-4xl mx-auto space-y-12">
+            {/* Hero Card */}
+            <div className="p-8 sm:p-12 rounded-3xl glass-panel border border-white/[0.08] text-center relative overflow-hidden shadow-2xl">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-sky-500/20 to-indigo-500/20 border border-white/[0.1] flex items-center justify-center mx-auto mb-6 text-sky-400 shadow-xl">
+                <FolderLock className="w-8 h-8" />
+              </div>
 
-                      {/* Owner Delete Button */}
-                      {isOwner && (
-                        <button
-                          onClick={(e) => handleDeleteMyItem(e, item)}
-                          disabled={deletingId === item.id}
-                          className="text-neutral-500 hover:text-red-400 transition-colors p-1 cursor-pointer shrink-0"
-                          title="Remove from my CloudDrive"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold mb-4">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>100% Private Isolated Storage</span>
+              </div>
 
-                    <div className="flex items-center justify-between text-xs text-neutral-400 mt-2.5 pt-2.5 border-t border-white/[0.05]">
-                      <span className="flex items-center gap-1 text-[11px]">
-                        <HardDrive className="w-3 h-3 text-neutral-500" />
-                        {formatFileSize(item.fileSize)}
-                      </span>
-                      <span className="flex items-center gap-1 text-[11px]">
-                        <Calendar className="w-3 h-3 text-neutral-500" />
-                        {formatDate(item.uploadedAt)}
-                      </span>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
+              <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight max-w-2xl mx-auto leading-tight">
+                Private CloudDrive & Direct CDN Streaming
+              </h1>
+
+              <p className="text-xs sm:text-sm text-neutral-400 mt-3 max-w-xl mx-auto leading-relaxed">
+                Upload and store your personal media across Kolkata, Israel, and US edge clusters.
+                Your uploaded files are completely private and only accessible by your account.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
+                <button
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthModalOpen(true);
+                  }}
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-sky-500/25 transition-all cursor-pointer"
+                >
+                  Create Free CloudDrive Account
+                </button>
+                <button
+                  onClick={() => {
+                    setAuthMode('signin');
+                    setAuthModalOpen(true);
+                  }}
+                  className="px-6 py-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer"
+                >
+                  Sign In to Your Drive
+                </button>
+              </div>
+            </div>
+
+            {/* Feature Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div className="p-6 rounded-3xl glass-card border border-white/[0.06] space-y-3">
+                <div className="w-10 h-10 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-white">Strict Account Privacy</h3>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Files uploaded are strictly restricted to your account. No public directory or open browsing.
+                </p>
+              </div>
+
+              <div className="p-6 rounded-3xl glass-card border border-white/[0.06] space-y-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-white">Own-Domain Direct CDN</h3>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Generate instant streaming and embed links on your domain with full HTTP 206 video seeking.
+                </p>
+              </div>
+
+              <div className="p-6 rounded-3xl glass-card border border-white/[0.06] space-y-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                  <Globe className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-white">Custom Node Allocation</h3>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Choose which cluster node (Kolkata, Israel, or US) holds your primary data replica.
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </main>
@@ -855,7 +851,7 @@ export default function HomePage() {
                     type="text"
                     value={uploadTags}
                     onChange={(e) => setUploadTags(e.target.value)}
-                    placeholder="e.g. photos, vacation, docs"
+                    placeholder="e.g. personal, media, documents"
                     className="w-full bg-white/[0.03] border border-white/[0.08] focus:border-sky-500/50 focus:outline-none rounded-xl px-3 py-2 text-xs text-white placeholder:text-neutral-500 transition-colors"
                   />
                 </div>
@@ -911,7 +907,7 @@ export default function HomePage() {
           <span>Distributed Object Storage &bull; Kolkata, Israel & US States</span>
         </div>
         <p className="text-[11px] text-neutral-600">
-          AnytimeView CloudDrive &bull; High-Performance CDN Streaming &bull; &copy; {new Date().getFullYear()}
+          AnytimeView CloudDrive &bull; High-Performance Private CDN &bull; &copy; {new Date().getFullYear()}
         </p>
       </footer>
     </div>
