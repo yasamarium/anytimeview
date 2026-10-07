@@ -9,17 +9,31 @@ import {
   FileText,
   Search,
   Globe,
-  Lock,
   Play,
   HardDrive,
   Calendar,
   Sparkles,
   ArrowUpRight,
+  Upload,
+  Copy,
+  Check,
+  User,
+  LogOut,
+  FolderLock,
+  Plus,
+  Trash2,
+  Share2,
+  Cloud,
+  CheckCircle2,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { AnytimeLogo } from '@/components/AnytimeLogo';
 import { DatabaseMapModal } from '@/components/DatabaseMapModal';
 import { MediaViewerModal } from '@/components/MediaViewerModal';
+import { UserAuthModal } from '@/components/UserAuthModal';
 import { ViewItem } from '@/lib/db';
+import { CloudUser } from '@/lib/userDb';
 
 export default function HomePage() {
   const [items, setItems] = useState<ViewItem[]>([]);
@@ -28,6 +42,49 @@ export default function HomePage() {
   const [search, setSearch] = useState('');
   const [mapOpen, setMapOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ViewItem | null>(null);
+
+  // CloudDrive User State
+  const [user, setUser] = useState<Partial<CloudUser> | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [activeView, setActiveView] = useState<'public' | 'drive'>('public');
+
+  // Direct CDN Copy State
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyToast, setCopyToast] = useState<string | null>(null);
+
+  // Upload State
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadTags, setUploadTags] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // Deleting user's item
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Fetch Session & Items
+  useEffect(() => {
+    checkUserSession();
+    loadItems();
+  }, []);
+
+  const checkUserSession = async () => {
+    try {
+      const res = await fetch('/api/auth/me');
+      const data = await res.json();
+      if (data.authenticated && data.user) {
+        setUser(data.user);
+        setActiveView('drive'); // Default logged-in users to their personal drive
+      } else {
+        setUser(null);
+      }
+    } catch {
+      setUser(null);
+    }
+  };
 
   const loadItems = async () => {
     try {
@@ -43,11 +100,119 @@ export default function HomePage() {
     }
   };
 
-  useEffect(() => {
-    loadItems();
-  }, []);
+  const handleUserLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      setUser(null);
+      setActiveView('public');
+    } catch {
+      setUser(null);
+    }
+  };
 
-  const filteredItems = items.filter((item) => {
+  const handleAuthSuccess = (authedUser: Partial<CloudUser>) => {
+    setUser(authedUser);
+    setActiveView('drive');
+    loadItems();
+  };
+
+  const copyDirectCdn = (e: React.MouseEvent, item: ViewItem) => {
+    e.stopPropagation();
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const fullUrl = `${origin}/api/cdn/${item.id}`;
+    navigator.clipboard.writeText(fullUrl);
+    setCopiedId(item.id);
+    setCopyToast(`Direct CDN URL copied for "${item.title}"`);
+    setTimeout(() => {
+      setCopiedId(null);
+      setCopyToast(null);
+    }, 3000);
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadFile) return;
+
+    if (!user) {
+      setUploadModalOpen(false);
+      setAuthMode('signin');
+      setAuthModalOpen(true);
+      return;
+    }
+
+    setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('title', uploadTitle || uploadFile.name);
+      formData.append('tags', uploadTags);
+
+      const res = await fetch('/api/items/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Upload failed');
+      }
+
+      setUploadSuccess(`Uploaded and replicated across Kolkata, Israel & US clusters!`);
+      setUploadFile(null);
+      setUploadTitle('');
+      setUploadTags('');
+
+      // Refresh items and user storage quota
+      await loadItems();
+      await checkUserSession();
+
+      setTimeout(() => {
+        setUploadModalOpen(false);
+        setUploadSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to upload to CloudDrive');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDeleteMyItem = async (e: React.MouseEvent, item: ViewItem) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to remove "${item.title}" from your CloudDrive?`)) {
+      return;
+    }
+
+    setDeletingId(item.id);
+    try {
+      const res = await fetch(`/api/items/${item.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Deletion failed');
+      }
+
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      await checkUserSession();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Filter items based on active view and filters
+  const currentViewItems = items.filter((item) => {
+    if (activeView === 'drive') {
+      if (!user) return false;
+      return item.ownerUsername?.toLowerCase() === user.username?.toLowerCase();
+    }
+    return true; // public view shows all
+  });
+
+  const filteredItems = currentViewItems.filter((item) => {
     const matchesFilter = filter === 'all' || item.fileType === filter;
     const matchesSearch =
       item.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -56,10 +221,11 @@ export default function HomePage() {
     return matchesFilter && matchesSearch;
   });
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes || bytes < 1024) return `${bytes || 0} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
   const formatDate = (iso: string) => {
@@ -75,72 +241,250 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#07080a] text-neutral-100 flex flex-col selection:bg-sky-500/20 selection:text-white">
+      {/* Toast Notification for CDN Copy */}
+      <AnimatePresence>
+        {copyToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -15, scale: 0.95 }}
+            className="fixed top-20 right-6 z-50 px-4 py-2.5 rounded-2xl bg-sky-500/90 text-white text-xs font-semibold shadow-2xl flex items-center gap-2 backdrop-blur-md border border-sky-400/30"
+          >
+            <Check className="w-4 h-4" />
+            <span>{copyToast}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Navbar */}
       <header className="sticky top-0 z-40 bg-[#07080a]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          {/* Logo */}
-          <Link href="/" className="hover:opacity-90 transition-opacity">
-            <AnytimeLogo size="md" showText={true} />
-          </Link>
+          {/* Logo & Platform Tag */}
+          <div className="flex items-center gap-3">
+            <Link href="/" className="hover:opacity-90 transition-opacity">
+              <AnytimeLogo size="md" showText={true} />
+            </Link>
+            <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-[10px] font-mono text-sky-400 font-medium">
+              CloudDrive & CDN
+            </span>
+          </div>
 
           {/* Right Action Controls */}
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Database in Map Button */}
             <button
               onClick={() => setMapOpen(true)}
-              className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-medium text-neutral-200 transition-all group"
+              className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-medium text-neutral-200 transition-all cursor-pointer group"
             >
               <Globe className="w-3.5 h-3.5 text-sky-400 group-hover:rotate-12 transition-transform" />
               <span className="hidden sm:inline">Database in Map</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             </button>
 
-            {/* Admin Keyhole Link */}
-            <Link
-              href="/admin"
-              className="p-2 rounded-full bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.06] text-neutral-400 hover:text-white transition-all"
-              title="Admin Console (/admin)"
-            >
-              <Lock className="w-3.5 h-3.5" />
-            </Link>
+            {/* Authenticated User Menu vs Guest Buttons */}
+            {user ? (
+              <div className="flex items-center gap-2">
+                {/* Upload Button */}
+                <button
+                  onClick={() => setUploadModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-md shadow-sky-500/20 transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Upload</span>
+                </button>
+
+                {/* User Storage Pill */}
+                <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-[11px] text-neutral-300">
+                  <HardDrive className="w-3 h-3 text-sky-400" />
+                  <span>{formatFileSize(user.storageUsed || 0)} used</span>
+                </div>
+
+                {/* User Avatar & Logout */}
+                <div className="flex items-center gap-1.5 pl-1">
+                  <img
+                    src={user.avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${user.username}`}
+                    alt={user.username}
+                    className="w-7 h-7 rounded-full bg-white/[0.08] border border-white/[0.1]"
+                  />
+                  <button
+                    onClick={handleUserLogout}
+                    className="p-1.5 rounded-full bg-white/[0.04] hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-colors cursor-pointer"
+                    title="Log Out"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setAuthMode('signin');
+                    setAuthModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-full text-xs font-medium text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-md shadow-sky-500/20 transition-all cursor-pointer"
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Create CloudDrive</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8">
-        {/* Sub-header & Filter Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-          {/* Filter Pills */}
-          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] self-start">
-            {[
-              { id: 'all', label: 'All Content' },
-              { id: 'video', label: 'Videos', icon: Film },
-              { id: 'image', label: 'Images', icon: ImageIcon },
-              { id: 'pdf', label: 'Documents', icon: FileText },
-            ].map((tab) => {
-              const active = filter === tab.id;
-              const Icon = tab.icon;
-              return (
+        {/* CloudDrive Hero / Status Bar if User is Logged In */}
+        {user ? (
+          <div className="mb-8 p-5 sm:p-6 rounded-3xl glass-panel border border-white/[0.08] relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-sky-400 font-semibold uppercase tracking-wider">
+                    Personal CloudDrive
+                  </span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span className="text-[11px] text-neutral-400 font-mono">Nodes: Kolkata • Israel • US</span>
+                </div>
+                <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">
+                  Welcome, @{user.username}
+                </h1>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Your files are geo-replicated and distributed with instant direct CDN endpoints.
+                </p>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex items-center gap-2.5">
                 <button
-                  key={tab.id}
-                  onClick={() => setFilter(tab.id as any)}
-                  className={`relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                    active ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
+                  onClick={() => setUploadModalOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all shadow-lg cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload to CloudDrive</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Storage Progress Bar */}
+            <div className="mt-5 pt-4 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-neutral-400">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-3.5 h-3.5 text-sky-400" />
+                <span>
+                  Storage Used:{' '}
+                  <strong className="text-white font-mono">{formatFileSize(user.storageUsed || 0)}</strong>
+                </span>
+                <span>&bull;</span>
+                <span>
+                  Total Files: <strong className="text-white font-mono">{user.filesCount || 0}</strong>
+                </span>
+              </div>
+              <div className="text-[11px] text-neutral-400">
+                Direct CDN URLs generated on your own domain
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Non-logged in Welcome Banner */
+          <div className="mb-8 p-5 sm:p-6 rounded-3xl glass-panel border border-white/[0.08] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-300 text-[11px] font-semibold mb-2">
+                <Sparkles className="w-3 h-3" />
+                <span>Free Distributed Cloud Storage</span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-bold text-white">
+                Store, Stream & Embed with Direct CDN URLs
+              </h2>
+              <p className="text-xs text-neutral-400 mt-1 max-w-xl">
+                Upload videos, images, and documents with instant CDN links hosted on our domain. Geo-replicated across Kolkata, Israel, and US nodes.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  setAuthMode('signup');
+                  setAuthModalOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all shadow-lg cursor-pointer"
+              >
+                Create Free Drive
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* View Switcher & Filter Controls */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* View Switcher: My CloudDrive vs Public Stream */}
+            {user && (
+              <div className="flex rounded-2xl bg-white/[0.04] p-1 border border-white/[0.06]">
+                <button
+                  onClick={() => setActiveView('drive')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    activeView === 'drive'
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 shadow-sm'
+                      : 'text-neutral-400 hover:text-white'
                   }`}
                 >
-                  {active && (
-                    <motion.div
-                      layoutId="filter-pill"
-                      className="absolute inset-0 bg-white/[0.1] rounded-xl border border-white/[0.1]"
-                      transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-                    />
-                  )}
-                  {Icon && <Icon className="w-3.5 h-3.5 relative z-10" />}
-                  <span className="relative z-10">{tab.label}</span>
+                  <FolderLock className="w-3.5 h-3.5" />
+                  <span>My CloudDrive</span>
                 </button>
-              );
-            })}
+                <button
+                  onClick={() => setActiveView('public')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    activeView === 'public'
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 shadow-sm'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Public Stream</span>
+                </button>
+              </div>
+            )}
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1 p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'video', label: 'Videos', icon: Film },
+                { id: 'image', label: 'Images', icon: ImageIcon },
+                { id: 'pdf', label: 'Docs', icon: FileText },
+              ].map((tab) => {
+                const active = filter === tab.id;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setFilter(tab.id as any)}
+                    className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                      active ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    {active && (
+                      <motion.div
+                        layoutId="filter-pill"
+                        className="absolute inset-0 bg-white/[0.1] rounded-xl border border-white/[0.1]"
+                        transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                      />
+                    )}
+                    {Icon && <Icon className="w-3.5 h-3.5 relative z-10" />}
+                    <span className="relative z-10">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Search Box */}
@@ -150,7 +494,7 @@ export default function HomePage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search content..."
+              placeholder="Search files..."
               className="w-full bg-white/[0.03] border border-white/[0.06] focus:border-white/20 focus:outline-none rounded-xl pl-9 pr-3 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-500 transition-colors"
             />
           </div>
@@ -167,132 +511,334 @@ export default function HomePage() {
             ))}
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="text-center py-24 px-4 glass-card rounded-3xl max-w-lg mx-auto border border-white/[0.06]">
+          <div className="text-center py-20 px-4 glass-card rounded-3xl max-w-lg mx-auto border border-white/[0.06]">
             <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-4 text-neutral-500">
-              <Sparkles className="w-6 h-6" />
+              <Cloud className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-semibold text-neutral-200">No media found</h3>
+            <h3 className="text-base font-semibold text-neutral-200">
+              {activeView === 'drive' ? 'Your CloudDrive is empty' : 'No media found'}
+            </h3>
             <p className="text-xs text-neutral-400 mt-1 max-w-xs mx-auto">
-              {search
+              {activeView === 'drive'
+                ? 'Upload your first file to get instant direct CDN streaming links.'
+                : search
                 ? 'No items match your search query.'
-                : 'No content has been published yet. Check back soon or upload via admin.'}
+                : 'No public content has been shared yet.'}
             </p>
-            <Link
-              href="/admin"
-              className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-semibold text-white transition-all"
-            >
-              <Lock className="w-3.5 h-3.5 text-neutral-400" />
-              <span>Go to Admin Portal</span>
-            </Link>
+
+            {user ? (
+              <button
+                onClick={() => setUploadModalOpen(true)}
+                className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 text-xs font-semibold text-white shadow-md transition-all cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload to CloudDrive</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setAuthMode('signup');
+                  setAuthModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 mt-5 px-4 py-2 rounded-full bg-white text-black text-xs font-semibold hover:bg-neutral-200 transition-all cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Create CloudDrive Account</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredItems.map((item) => (
-              <motion.div
-                key={item.id}
-                layout
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25 }}
-                onClick={() => setSelectedItem(item)}
-                className="group cursor-pointer rounded-3xl glass-card overflow-hidden border border-white/[0.06] hover:border-white/[0.18] transition-all flex flex-col justify-between"
-              >
-                {/* Media Preview Box */}
-                <div className="relative aspect-[16/10] bg-black/60 overflow-hidden flex items-center justify-center">
-                  {item.fileType === 'video' && (
-                    <>
-                      <video
-                        src={item.url}
-                        preload="metadata"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition-colors">
-                        <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform">
-                          <Play className="w-5 h-5 ml-0.5 fill-white" />
+            {filteredItems.map((item) => {
+              const cdnStreamUrl = item.cdnUrl || `/api/cdn/${item.id}`;
+              const isOwner = user && item.ownerUsername === user.username;
+
+              return (
+                <motion.div
+                  key={item.id}
+                  layout
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25 }}
+                  onClick={() => setSelectedItem(item)}
+                  className="group cursor-pointer rounded-3xl glass-card overflow-hidden border border-white/[0.06] hover:border-white/[0.18] transition-all flex flex-col justify-between relative"
+                >
+                  {/* Media Preview Box */}
+                  <div className="relative aspect-[16/10] bg-black/60 overflow-hidden flex items-center justify-center">
+                    {item.fileType === 'video' && (
+                      <>
+                        <video
+                          src={cdnStreamUrl}
+                          preload="metadata"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition-colors">
+                          <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform">
+                            <Play className="w-5 h-5 ml-0.5 fill-white" />
+                          </div>
+                        </div>
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-sky-400 flex items-center gap-1 border border-white/[0.08]">
+                          <Film className="w-3 h-3" />
+                          <span>VIDEO</span>
+                        </div>
+                      </>
+                    )}
+
+                    {item.fileType === 'image' && (
+                      <>
+                        <img
+                          src={cdnStreamUrl}
+                          alt={item.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          loading="lazy"
+                        />
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-emerald-400 flex items-center gap-1 border border-white/[0.08]">
+                          <ImageIcon className="w-3 h-3" />
+                          <span>IMAGE</span>
+                        </div>
+                      </>
+                    )}
+
+                    {item.fileType === 'pdf' && (
+                      <div className="w-full h-full bg-gradient-to-tr from-pink-950/20 via-neutral-900 to-black flex flex-col items-center justify-center p-6 text-center group-hover:bg-black/80 transition-colors">
+                        <div className="w-12 h-12 rounded-2xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                          <FileText className="w-6 h-6 text-pink-400" />
+                        </div>
+                        <span className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider">
+                          Document / PDF
+                        </span>
+                        <span className="text-[10px] text-neutral-500 mt-1">Tap to read inline</span>
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-pink-400 flex items-center gap-1 border border-white/[0.08]">
+                          <FileText className="w-3 h-3" />
+                          <span>PDF</span>
                         </div>
                       </div>
-                      <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-sky-400 flex items-center gap-1 border border-white/[0.08]">
-                        <Film className="w-3 h-3" />
-                        <span>VIDEO</span>
-                      </div>
-                    </>
-                  )}
+                    )}
 
-                  {item.fileType === 'image' && (
-                    <>
-                      <img
-                        src={item.url}
-                        alt={item.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        loading="lazy"
-                      />
-                      <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-emerald-400 flex items-center gap-1 border border-white/[0.08]">
-                        <ImageIcon className="w-3 h-3" />
-                        <span>IMAGE</span>
+                    {/* Owner Tag Badge */}
+                    {item.ownerUsername && (
+                      <div className="absolute bottom-3 left-3 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-md text-[10px] font-mono text-sky-300 border border-white/[0.08]">
+                        @{item.ownerUsername}
                       </div>
-                    </>
-                  )}
+                    )}
 
-                  {item.fileType === 'pdf' && (
-                    <div className="w-full h-full bg-gradient-to-tr from-pink-950/20 via-neutral-900 to-black flex flex-col items-center justify-center p-6 text-center group-hover:bg-black/80 transition-colors">
-                      <div className="w-12 h-12 rounded-2xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
-                        <FileText className="w-6 h-6 text-pink-400" />
-                      </div>
-                      <span className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider">
-                        Document / PDF
-                      </span>
-                      <span className="text-[10px] text-neutral-500 mt-1">Tap to read inline</span>
-                      <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-semibold text-pink-400 flex items-center gap-1 border border-white/[0.08]">
-                        <FileText className="w-3 h-3" />
-                        <span>PDF</span>
-                      </div>
+                    {/* Direct CDN Link Copy Button on Hover */}
+                    <button
+                      onClick={(e) => copyDirectCdn(e, item)}
+                      className={`absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1.5 backdrop-blur-md border shadow-lg transition-all cursor-pointer ${
+                        copiedId === item.id
+                          ? 'bg-emerald-500 text-white border-emerald-400 scale-105'
+                          : 'bg-black/70 text-sky-300 hover:text-white hover:bg-black/90 border-white/20'
+                      }`}
+                      title="Copy Direct CDN URL on our domain"
+                    >
+                      {copiedId === item.id ? (
+                        <>
+                          <Check className="w-3 h-3" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>CDN Link</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Details Footer */}
+                  <div className="p-4 sm:p-5">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
+                        {item.title}
+                      </h3>
+
+                      {/* Owner Delete Button */}
+                      {isOwner && (
+                        <button
+                          onClick={(e) => handleDeleteMyItem(e, item)}
+                          disabled={deletingId === item.id}
+                          className="text-neutral-500 hover:text-red-400 transition-colors p-1 cursor-pointer shrink-0"
+                          title="Remove from my CloudDrive"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                  )}
 
-                  <div className="absolute top-3 right-3 p-1.5 rounded-full bg-black/60 backdrop-blur-md text-white opacity-0 group-hover:opacity-100 transition-opacity border border-white/10">
-                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    <div className="flex items-center justify-between text-xs text-neutral-400 mt-2.5 pt-2.5 border-t border-white/[0.05]">
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <HardDrive className="w-3 h-3 text-neutral-500" />
+                        {formatFileSize(item.fileSize)}
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <Calendar className="w-3 h-3 text-neutral-500" />
+                        {formatDate(item.uploadedAt)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-
-                {/* Details Footer */}
-                <div className="p-4 sm:p-5">
-                  <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
-                    {item.title}
-                  </h3>
-
-                  <div className="flex items-center justify-between text-xs text-neutral-400 mt-2.5 pt-2.5 border-t border-white/[0.05]">
-                    <span className="flex items-center gap-1 text-[11px]">
-                      <HardDrive className="w-3 h-3 text-neutral-500" />
-                      {formatFileSize(item.fileSize)}
-                    </span>
-                    <span className="flex items-center gap-1 text-[11px]">
-                      <Calendar className="w-3 h-3 text-neutral-500" />
-                      {formatDate(item.uploadedAt)}
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </main>
 
-      {/* Footer Info */}
-      <footer className="border-t border-white/[0.06] py-6 px-4 text-center text-xs text-neutral-500">
-        <div className="flex items-center justify-center gap-2 mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          <span>Distributed across Kolkata, Israel & US States nodes</span>
-        </div>
-        <p className="text-[11px] text-neutral-600">
-          AnytimeView &copy; {new Date().getFullYear()} &bull; Minimalist Stream & Document Vault
-        </p>
-      </footer>
+      {/* Upload Modal */}
+      <AnimatePresence>
+        {uploadModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setUploadModalOpen(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-md"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 10 }}
+              transition={{ type: 'spring', damping: 26, stiffness: 320 }}
+              className="relative w-full max-w-lg rounded-3xl glass-panel p-6 sm:p-7 z-10 border border-white/[0.1] shadow-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                    <Upload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Upload to CloudDrive</h3>
+                    <p className="text-xs text-neutral-400">
+                      Files are distributed to Kolkata, Israel & US nodes.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setUploadModalOpen(false)}
+                  className="p-1.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {uploadSuccess && (
+                <div className="mt-4 p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{uploadSuccess}</span>
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="mt-4 p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleUploadSubmit} className="mt-5 space-y-4">
+                <label className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-white/[0.12] hover:border-white/30 rounded-2xl cursor-pointer bg-white/[0.02] hover:bg-white/[0.04] transition-all group">
+                  <div className="flex flex-col items-center justify-center p-4 text-center">
+                    <Upload className="w-7 h-7 text-neutral-500 group-hover:text-neutral-300 mb-2 transition-colors" />
+                    <p className="text-xs text-neutral-200 font-medium">
+                      {uploadFile ? uploadFile.name : 'Select or drag & drop media file'}
+                    </p>
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      {uploadFile
+                        ? `${(uploadFile.size / 1024 / 1024).toFixed(2)} MB`
+                        : 'Videos, Images, PDFs'}
+                    </p>
+                  </div>
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept="video/*,image/*,.pdf,application/pdf"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        const f = e.target.files[0];
+                        setUploadFile(f);
+                        if (!uploadTitle) {
+                          setUploadTitle(f.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' '));
+                        }
+                      }
+                    }}
+                  />
+                </label>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">
+                    Title / Caption
+                  </label>
+                  <input
+                    type="text"
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="Enter file title"
+                    className="w-full bg-white/[0.03] border border-white/[0.08] focus:border-sky-500/50 focus:outline-none rounded-xl px-3 py-2 text-xs text-white placeholder:text-neutral-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">
+                    Tags <span className="text-neutral-500">(comma separated)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={uploadTags}
+                    onChange={(e) => setUploadTags(e.target.value)}
+                    placeholder="e.g. photos, vacation, docs"
+                    className="w-full bg-white/[0.03] border border-white/[0.08] focus:border-sky-500/50 focus:outline-none rounded-xl px-3 py-2 text-xs text-white placeholder:text-neutral-500 transition-colors"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={uploading || !uploadFile}
+                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20 disabled:opacity-60 transition-all cursor-pointer"
+                >
+                  {uploading ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Distributing to clusters...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload & Generate CDN URL</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* User Auth Modal */}
+      <UserAuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+        initialMode={authMode}
+      />
 
       {/* Database in Map Modal */}
       <DatabaseMapModal isOpen={mapOpen} onClose={() => setMapOpen(false)} />
 
       {/* Media Viewer Modal */}
       <MediaViewerModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+
+      {/* Clean Footer (strictly no admin button) */}
+      <footer className="border-t border-white/[0.06] py-6 px-4 text-center text-xs text-neutral-500">
+        <div className="flex items-center justify-center gap-2 mb-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span>Distributed Object Storage &bull; Kolkata, Israel & US States</span>
+        </div>
+        <p className="text-[11px] text-neutral-600">
+          AnytimeView CloudDrive &bull; High-Performance CDN Streaming &bull; &copy; {new Date().getFullYear()}
+        </p>
+      </footer>
     </div>
   );
 }

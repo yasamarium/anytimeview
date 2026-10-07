@@ -14,10 +14,14 @@ export interface ViewItem {
   fileSize: number;
   contentType: string;
   url: string;
+  cdnUrl: string; // Direct stream/download URL on our own domain
   assetId: number;
   uploadedAt: string;
   clusterNodes: string[];
   tags: string[];
+  ownerUsername?: string;
+  ownerId?: string;
+  isPublic?: boolean;
 }
 
 // Built-in cluster access credential for zero-configuration serverless deployments
@@ -120,7 +124,13 @@ export async function uploadToStorage(
   fileBuffer: Buffer,
   rawFileName: string,
   contentType: string,
-  meta?: { title?: string; fileType?: string; tags?: string[] }
+  meta?: {
+    title?: string;
+    fileType?: string;
+    tags?: string[];
+    ownerUsername?: string;
+    ownerId?: string;
+  }
 ): Promise<{ url: string; assetId: number; fileName: string }> {
   const release = await getOrCreateRelease();
   const owner = getClusterOwner();
@@ -133,6 +143,7 @@ export async function uploadToStorage(
     t: meta?.title || base,
     type: meta?.fileType || 'image',
     tags: meta?.tags || [],
+    u: meta?.ownerUsername || '',
   });
 
   const uploadUrl = `https://uploads.github.com/repos/${owner}/${DB_REPO}/releases/${release.id}/assets?name=${encodeURIComponent(safeFileName)}&label=${encodeURIComponent(labelData)}`;
@@ -229,10 +240,13 @@ export async function getAllItems(): Promise<ViewItem[]> {
     const items: ViewItem[] = [];
     for (const asset of release.assets) {
       const existing = metadataMap[asset.id];
+      const itemId = existing?.id || `view_${asset.id}`;
       if (existing) {
         items.push({
           ...existing,
+          id: itemId,
           url: asset.browser_download_url,
+          cdnUrl: `/api/cdn/${itemId}`,
           fileSize: asset.size,
           fileName: asset.name,
         });
@@ -240,6 +254,7 @@ export async function getAllItems(): Promise<ViewItem[]> {
         let title = cleanTitleFromName(asset.name);
         let fileType = detectFileTypeFromName(asset.name, asset.content_type);
         let tags: string[] = [];
+        let ownerUsername: string | undefined = undefined;
 
         if (asset.label) {
           try {
@@ -247,21 +262,25 @@ export async function getAllItems(): Promise<ViewItem[]> {
             if (meta.t) title = meta.t;
             if (meta.type) fileType = meta.type;
             if (Array.isArray(meta.tags)) tags = meta.tags;
+            if (meta.u) ownerUsername = meta.u;
           } catch {}
         }
 
         items.push({
-          id: `view_${asset.id}`,
+          id: itemId,
           title,
           fileType,
           fileName: asset.name,
           fileSize: asset.size,
           contentType: asset.content_type || 'application/octet-stream',
           url: asset.browser_download_url,
+          cdnUrl: `/api/cdn/${itemId}`,
           assetId: asset.id,
           uploadedAt: asset.created_at,
           clusterNodes: ['Kolkata Node', 'Israel Gateway', 'US Central Core'],
           tags,
+          ownerUsername,
+          isPublic: true,
         });
       }
     }
@@ -270,8 +289,27 @@ export async function getAllItems(): Promise<ViewItem[]> {
     return items.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
   } catch (err) {
     console.error('Error fetching release items:', err);
-    return Object.values(metadataMap);
+    return Object.values(metadataMap).map((item) => ({
+      ...item,
+      cdnUrl: item.cdnUrl || `/api/cdn/${item.id}`,
+    }));
   }
+}
+
+/**
+ * Retrieve single item by ID or assetId
+ */
+export async function getItemById(id: string): Promise<ViewItem | null> {
+  const cleanId = id.trim();
+  const items = await getAllItems();
+  const found = items.find(
+    (i) =>
+      i.id === cleanId ||
+      i.assetId?.toString() === cleanId ||
+      `view_${i.assetId}` === cleanId ||
+      i.fileName === cleanId
+  );
+  return found || null;
 }
 
 /**

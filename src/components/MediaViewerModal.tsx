@@ -11,8 +11,9 @@ import {
   Image as ImageIcon,
   HardDrive,
   Calendar,
-  Maximize2,
   Globe,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { ViewItem } from '@/lib/db';
 
@@ -22,12 +23,14 @@ interface MediaViewerModalProps {
 }
 
 export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
-  const [pdfZoom, setPdfZoom] = useState(100);
+  const [copied, setCopied] = useState(false);
 
   if (!item) return null;
 
+  const cdnUrl = item.cdnUrl || `/api/cdn/${item.id}`;
+
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
+    if (!bytes || bytes < 1024) return `${bytes || 0} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
@@ -42,6 +45,14 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
     } catch {
       return iso;
     }
+  };
+
+  const copyDirectCdn = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const fullUrl = `${origin}${cdnUrl}`;
+    navigator.clipboard.writeText(fullUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
   };
 
   return (
@@ -73,9 +84,16 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
                 {item.fileType === 'pdf' && <FileText className="w-4 h-4 text-pink-400" />}
               </div>
               <div className="min-w-0">
-                <h2 className="text-base sm:text-lg font-bold text-white truncate">
-                  {item.title}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold text-white truncate">
+                    {item.title}
+                  </h2>
+                  {item.ownerUsername && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20 shrink-0">
+                      @{item.ownerUsername}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-3 text-xs text-neutral-400 mt-0.5">
                   <span className="flex items-center gap-1">
                     <HardDrive className="w-3 h-3 text-neutral-500" />
@@ -91,31 +109,54 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
 
             {/* Actions */}
             <div className="flex items-center gap-2 shrink-0">
+              {/* Copy Direct CDN Link Button */}
+              <button
+                onClick={copyDirectCdn}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
+                  copied
+                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                    : 'bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-300'
+                }`}
+                title="Copy Direct CDN Link on our domain"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>CDN Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy CDN Link</span>
+                  </>
+                )}
+              </button>
+
+              {/* Direct Download via our CDN */}
               <a
-                href={item.url}
+                href={`${cdnUrl}?download=1`}
                 download={item.fileName}
-                target="_blank"
-                rel="noreferrer"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-neutral-200 hover:text-white text-xs font-medium transition-all"
-                title="Download file"
+                title="Direct Download"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Download</span>
               </a>
 
+              {/* Open Direct CDN in new tab */}
               <a
-                href={item.url}
+                href={cdnUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="p-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-neutral-300 hover:text-white transition-all"
-                title="Open Direct Link"
+                title="Open Direct CDN Stream"
               >
                 <ExternalLink className="w-4 h-4" />
               </a>
 
               <button
                 onClick={onClose}
-                className="p-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-neutral-400 hover:text-white transition-colors"
+                className="p-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-neutral-400 hover:text-white transition-colors cursor-pointer"
                 title="Close Viewer"
               >
                 <X className="w-4 h-4" />
@@ -128,7 +169,7 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
             {item.fileType === 'video' && (
               <div className="w-full h-full flex items-center justify-center bg-black/60 rounded-2xl overflow-hidden border border-white/[0.05]">
                 <video
-                  src={item.url}
+                  src={cdnUrl}
                   controls
                   autoPlay
                   playsInline
@@ -140,7 +181,7 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
             {item.fileType === 'image' && (
               <div className="w-full h-full flex items-center justify-center bg-black/40 rounded-2xl p-2 overflow-auto border border-white/[0.05]">
                 <img
-                  src={item.url}
+                  src={cdnUrl}
                   alt={item.title}
                   className="max-w-full max-h-full object-contain rounded-xl shadow-2xl select-none"
                 />
@@ -150,7 +191,7 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
             {item.fileType === 'pdf' && (
               <div className="w-full h-full flex flex-col bg-neutral-950 rounded-2xl border border-white/[0.08] overflow-hidden">
                 <iframe
-                  src={`${item.url}#view=FitH`}
+                  src={`${cdnUrl}#view=FitH`}
                   className="w-full flex-1 border-0 rounded-2xl bg-neutral-900"
                   title={item.title}
                 />
@@ -163,7 +204,7 @@ export function MediaViewerModal({ item, onClose }: MediaViewerModalProps) {
             <div className="flex items-center gap-2">
               <Globe className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-[11px] text-neutral-300 font-mono">
-                Streamed via Distributed Nodes: Kolkata • Israel • US
+                Streamed via AnytimeView Edge CDN: Kolkata • Israel • US
               </span>
             </div>
 

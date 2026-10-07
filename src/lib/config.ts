@@ -1,6 +1,7 @@
 export const ADMIN_PASSKEY = '123as';
 export const ADMIN_COOKIE_NAME = 'anytimeview_admin_session';
 export const ADMIN_COOKIE_VALUE = 'av_authenticated_node_master';
+export const USER_SESSION_COOKIE = 'anytimeview_user_session';
 
 export interface ClusterNode {
   id: string;
